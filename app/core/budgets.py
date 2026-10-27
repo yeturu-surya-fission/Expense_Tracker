@@ -8,10 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.formatting import bar, money, status_dot
-from app.core.ledger import LedgerError, normalize_category, to_decimal
+from app.core.errors import ExpenseError
+from app.core.expenses import normalize_category, to_decimal
 from app.core.periods import Period, current_month, month_key
-from app.core.types import TxnKind
-from app.db.models import Budget, BudgetAlert, Transaction
+from app.db.models import Budget, BudgetAlert, Expense
 
 
 @dataclass
@@ -37,13 +37,12 @@ async def category_spent(session: AsyncSession, user_id: int, category: str, per
     p = period or current_month()
     total = (
         await session.execute(
-            select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-                Transaction.user_id == user_id,
-                Transaction.kind == TxnKind.EXPENSE.value,
-                Transaction.category == category,
-                Transaction.voided_at.is_(None),
-                Transaction.occurred_at >= p.start,
-                Transaction.occurred_at < p.end,
+            select(func.coalesce(func.sum(Expense.amount), 0)).where(
+                Expense.user_id == user_id,
+                Expense.category == category,
+                Expense.voided_at.is_(None),
+                Expense.occurred_at >= p.start,
+                Expense.occurred_at < p.end,
             )
         )
     ).scalar_one()
@@ -59,7 +58,7 @@ async def _get_budget(session: AsyncSession, user_id: int, category: str) -> Bud
 async def set_budget(session: AsyncSession, user_id: int, category: str, limit: Decimal | float) -> Budget:
     category, limit = normalize_category(category), to_decimal(limit)
     if limit <= 0:
-        raise LedgerError("A budget limit must be greater than zero.")
+        raise ExpenseError("A budget limit must be greater than zero.")
     budget = await _get_budget(session, user_id, category)
     if budget is None:
         budget = Budget(user_id=user_id, category=category, monthly_limit=limit)
@@ -122,3 +121,12 @@ async def evaluate_alerts(session: AsyncSession, user_id: int, category: str) ->
         return f"🚨 Your {category} budget is fully used: {money(status.spent)} of {money(status.limit)}. Nothing left this month."
     return (f"⚠️ {top}% of your {category} budget is used: {money(status.spent)} of {money(status.limit)}. "
             f"{money(status.remaining)} left - spend wisely!")
+
+
+async def alerts_for(session: AsyncSession, user_id: int, expenses: list[Expense]) -> list[str]:
+    """Budget alerts triggered by these freshly recorded expenses (one check per category)."""
+    out = []
+    for category in dict.fromkeys(e.category for e in expenses):
+        if (msg := await evaluate_alerts(session, user_id, category)):
+            out.append(msg)
+    return out

@@ -2,13 +2,14 @@ services:
   db:
     image: postgres:16
     environment:
-      POSTGRES_USER: wall
-      POSTGRES_PASSWORD: wall
-      POSTGRES_DB: wall
+      POSTGRES_USER: expense
+      POSTGRES_PASSWORD: expense
+      POSTGRES_DB: expense_tracker
     ports: ["5432:5432"]
-    volumes: [pgdata:/var/lib/postgresql/data]
+    # a NEW volume: the earlier cash/bank version's data (volume "pgdata") is left untouched
+    volumes: [pgdata_expense:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wall"]
+      test: ["CMD-SHELL", "pg_isready -U expense -d expense_tracker"]
       interval: 3s
       retries: 20
 
@@ -16,11 +17,11 @@ services:
     build: .
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://wall:wall@db:5432/wall
+      DATABASE_URL: postgresql+asyncpg://expense:expense@db:5432/expense_tracker
     ports: ["8000:8000"]
     depends_on:
       db: { condition: service_healthy }
     restart: unless-stopped
 
 volumes:
-  pgdata:
+  pgdata_expense:

@@ -1,3 +1,5 @@
+> ⚠️ **Out of date.** This page describes the earlier cash/bank wallet version. The current design (expenses, friends, bill splitting, trip groups) is described in the [README](../README.md). The agent graph (`agent → tools → respond`) is unchanged.
+
 # The agent's state graph
 
 The whole "brain" is a small LangGraph **state graph** with just three nodes: **agent**, **tools** and **respond**.

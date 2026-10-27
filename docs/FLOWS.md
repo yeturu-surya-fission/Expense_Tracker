@@ -1,3 +1,5 @@
+> ⚠️ **Out of date.** This page describes the earlier cash/bank wallet version. The current design (expenses, friends, bill splitting, trip groups) is described in the [README](../README.md). The agent graph (`agent → tools → respond`) is unchanged.
+
 # Flows
 
 Step-by-step behaviour of the important paths. For the static structure see [ARCHITECTURE.md](ARCHITECTURE.md).

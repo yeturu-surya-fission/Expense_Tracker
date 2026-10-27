@@ -2,7 +2,8 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from app.core import budgets, views
-from app.core.ledger import LedgerError, normalize_category
+from app.core.errors import UserError
+from app.core.expenses import normalize_category
 from app.core.periods import PeriodError
 from app.db.session import session_scope
 from app.tools._common import user_id_from
@@ -19,8 +20,8 @@ async def set_budget(category: str, monthly_limit: float, config: RunnableConfig
             spent = await budgets.category_spent(s, uid, b.category)
             status = budgets.BudgetStatus(b.category, b.monthly_limit, spent)
             alert = await budgets.evaluate_alerts(s, uid, b.category)
-    except LedgerError as e:
-        return f"❌ FAILED: {e}"
+    except UserError as e:
+        return f"❌ {e}"
     return "\n".join(filter(None, ["🎯 Budget set", status.line(), alert]))
 
 

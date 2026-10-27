@@ -1,27 +1,29 @@
 """
 Bank-statement import (everything except the LLM, which lives in app/agent/statement_parser.py).
 
-    PDF bytes --extract_pdf_pages--> text --(LLM)--> raw rows --build_plan--> items (new / duplicate / maybe)
-        --save_import--> StatementImport(pending) --user taps confirm--> apply_import --> ledger entries on BANK
-                                                                      |--> undo_import reverses them all
-All amounts are validated here in code: the LLM output is never trusted blindly.
+    PDF bytes --extract_pdf_pages--> text --(LLM)--> raw rows --build_plan--> items (new / duplicate / maybe / skipped)
+        --save_import--> StatementImport(pending) --user taps confirm--> apply_import --> Expense rows
+                                                                      |--> undo_import voids them all
+Only money going OUT becomes an expense. Credits and ATM withdrawals are skipped (a withdrawal is not spending: what
+you buy with the cash is what you log). All amounts are validated here in code: the LLM output is never trusted blindly.
 """
 import hashlib
 import io
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import budgets, ledger
-from app.core.formatting import balances_line, cat_icon, money
+from app.core import budgets
+from app.core.errors import UserError
+from app.core.expenses import add_expense, normalize_category
+from app.core.formatting import cat_icon, money
 from app.core.periods import now_local, to_local, tz
-from app.core.types import AccountType, TxnKind
-from app.db.models import StatementImport, Transaction
+from app.db.models import Expense, StatementImport
 
 MAX_PAGES = 80
 MAX_ROWS = 1500
@@ -33,7 +35,7 @@ CATEGORIES = [
 CASH_WITHDRAWAL = "cash_withdrawal"
 
 
-class StatementError(Exception):
+class StatementError(UserError):
     """User-facing problem with the uploaded statement."""
 
 
@@ -86,23 +88,9 @@ def _clean_row(raw: dict) -> dict | None:
     kind = str(raw.get("type", "")).strip().lower()
     if kind not in ("debit", "credit") or amount <= 0 or d > now_local().date() + timedelta(days=1) or d.year < 2000:
         return None
-    category = ledger.normalize_category(raw.get("category"))
+    category = normalize_category(raw.get("category"))
     desc = re.sub(r"\s+", " ", str(raw.get("description") or "")).strip()[:120] or category
-    bal = raw.get("balance_after")
-    try:
-        bal = str(Decimal(str(bal)).quantize(Decimal("0.01"))) if bal is not None else None
-    except InvalidOperation:
-        bal = None
-    return {"date": d.isoformat(), "description": desc, "amount": str(amount), "type": kind,
-            "category": category, "balance_after": bal}
-
-
-def _closing_balance(rows: list[dict]) -> str | None:
-    with_bal = [r for r in rows if r["balance_after"] is not None]
-    if len(with_bal) < 2:
-        return with_bal[0]["balance_after"] if with_bal else None
-    newest_last = with_bal[-1]["date"] >= with_bal[0]["date"]  # statement order: oldest->newest or reverse
-    return (with_bal[-1] if newest_last else with_bal[0])["balance_after"]
+    return {"date": d.isoformat(), "description": desc, "amount": str(amount), "type": kind, "category": category}
 
 
 async def build_plan(session: AsyncSession, user_id: int, raw_rows: list[dict]) -> tuple[list[dict], dict]:
@@ -112,7 +100,6 @@ async def build_plan(session: AsyncSession, user_id: int, raw_rows: list[dict]) 
         raise StatementError("I couldn't find any transactions in that PDF. I can only import bank/card statements.")
     if len(rows) > MAX_ROWS:
         raise StatementError(f"That statement has {len(rows)} rows; the limit is {MAX_ROWS}. Send it in parts.")
-    closing = _closing_balance(rows)
 
     seen: dict[str, int] = {}
     for r in rows:  # identical rows on the same day get distinct keys (two coffees of 100 are two coffees)
@@ -120,44 +107,47 @@ async def build_plan(session: AsyncSession, user_id: int, raw_rows: list[dict]) 
         n = seen[base] = seen.get(base, 0) + 1
         r["key"] = hashlib.sha1(f"{base}|{n}".encode()).hexdigest()[:40]
 
+    spendable = [r for r in rows if r["type"] == "debit" and r["category"] != CASH_WITHDRAWAL]
     already = set((await session.execute(
-        select(Transaction.external_key).where(
-            Transaction.user_id == user_id, Transaction.voided_at.is_(None),
-            Transaction.external_key.in_([r["key"] for r in rows]),
+        select(Expense.external_key).where(
+            Expense.user_id == user_id, Expense.voided_at.is_(None),
+            Expense.external_key.in_([r["key"] for r in spendable] or [""]),
         )
     )).scalars().all())
 
-    lo = date.fromisoformat(min(r["date"] for r in rows)) - timedelta(days=1)
-    hi = date.fromisoformat(max(r["date"] for r in rows)) + timedelta(days=1)
-    manual = list((await session.execute(
-        select(Transaction).where(
-            Transaction.user_id == user_id, Transaction.voided_at.is_(None), Transaction.external_key.is_(None),
-            Transaction.occurred_at >= datetime.combine(lo, time.min, tzinfo=tz()),
-            Transaction.occurred_at < datetime.combine(hi + timedelta(days=1), time.min, tzinfo=tz()),
-            Transaction.kind.in_([TxnKind.EXPENSE.value, TxnKind.INCOME.value, TxnKind.TRANSFER.value]),
-        )
-    )).scalars().all())
+    manual: list[Expense] = []
+    if spendable:
+        lo = date.fromisoformat(min(r["date"] for r in spendable)) - timedelta(days=1)
+        hi = date.fromisoformat(max(r["date"] for r in spendable)) + timedelta(days=2)
+        manual = list((await session.execute(
+            select(Expense).where(
+                Expense.user_id == user_id, Expense.voided_at.is_(None), Expense.source == "personal",
+                Expense.occurred_at >= datetime.combine(lo, time.min, tzinfo=tz()),
+                Expense.occurred_at < datetime.combine(hi, time.min, tzinfo=tz()),
+            )
+        )).scalars().all())
 
     for r in rows:
-        if r["key"] in already:
+        if r["type"] == "credit":
+            r["status"] = "skip_credit"
+        elif r["category"] == CASH_WITHDRAWAL:
+            r["status"] = "skip_cash"
+        elif r["key"] in already:
             r["status"] = "duplicate"
-            continue
-        r["status"] = "new"
-        d, amount = date.fromisoformat(r["date"]), Decimal(r["amount"])
-        for m in manual:  # did the user already log this by hand? (same amount, bank side, +-1 day)
-            bank_side = (m.from_account if r["type"] == "debit" else m.to_account) == AccountType.BANK.value
-            if m.amount == amount and bank_side and abs((to_local(m.occurred_at).date() - d).days) <= 1:
-                manual.remove(m)
-                r["status"] = "maybe"
-                break
+        else:
+            r["status"] = "new"
+            d, amount = date.fromisoformat(r["date"]), Decimal(r["amount"])
+            for m in manual:  # did the user already log this by hand? (same amount, +-1 day)
+                if m.amount == amount and abs((to_local(m.occurred_at).date() - d).days) <= 1:
+                    manual.remove(m)
+                    r["status"] = "maybe"
+                    break
 
-    debits = [Decimal(r["amount"]) for r in rows if r["type"] == "debit"]
-    credits = [Decimal(r["amount"]) for r in rows if r["type"] == "credit"]
+    total = lambda status: str(sum((Decimal(r["amount"]) for r in rows if r["status"] == status), Decimal(0)))
     meta = {
         "count": len(rows), "dropped": dropped,
         "start": min(r["date"] for r in rows), "end": max(r["date"] for r in rows),
-        "debit_total": str(sum(debits, Decimal(0))), "credit_total": str(sum(credits, Decimal(0))),
-        "closing_balance": closing,
+        "credits_total": total("skip_credit"), "cash_total": total("skip_cash"),
     }
     return rows, meta
 
@@ -171,41 +161,40 @@ async def save_import(session: AsyncSession, user_id: int, filename: str | None,
 
 # ------------------------------------------------------------------ preview
 def counts(items: list[dict]) -> dict[str, int]:
-    return {s: sum(1 for i in items if i["status"] == s) for s in ("new", "maybe", "duplicate")}
+    return {s: sum(1 for i in items if i["status"] == s) for s in ("new", "maybe", "duplicate", "skip_credit", "skip_cash")}
 
 
 def preview_text(imp: StatementImport) -> str:
     items, meta = imp.items, imp.meta
     c = counts(items)
-    fresh = [i for i in items if i["status"] != "duplicate"]
-    debit = sum((Decimal(i["amount"]) for i in fresh if i["type"] == "debit"), Decimal(0))
-    credit = sum((Decimal(i["amount"]) for i in fresh if i["type"] == "credit"), Decimal(0))
+    fresh = [i for i in items if i["status"] in ("new", "maybe")]
+    spent = sum((Decimal(i["amount"]) for i in fresh), Decimal(0))
     fmt = lambda s: date.fromisoformat(s).strftime("%d %b %Y")
     lines = [
         f"📄 {imp.filename}",
-        f"🗓 {fmt(meta['start'])} → {fmt(meta['end'])} · {meta['count']} transactions\n",
-        f"🔴 Money out  {money(debit)}",
-        f"🟢 Money in   {money(credit)}",
-        f"🏦 Net change to your bank: {'+' if credit >= debit else ''}{money(credit - debit)}\n",
+        f"🗓 {fmt(meta['start'])} → {fmt(meta['end'])} · {meta['count']} rows read\n",
+        f"🔴 Spending to add  {money(spent)}\n",
     ]
     by_cat: dict[str, Decimal] = {}
     for i in fresh:
-        if i["type"] == "debit":
-            by_cat[i["category"]] = by_cat.get(i["category"], Decimal(0)) + Decimal(i["amount"])
+        by_cat[i["category"]] = by_cat.get(i["category"], Decimal(0)) + Decimal(i["amount"])
     if by_cat:
-        lines.append("Spending by category")
+        lines.append("By category")
         total = sum(by_cat.values()) or Decimal(1)
         for cat, amt in sorted(by_cat.items(), key=lambda kv: -kv[1])[:8]:
-            tag = " → moved to cash" if cat == CASH_WITHDRAWAL else ""
-            lines.append(f"{cat_icon(cat)} {cat:<15} {money(amt)} ({int(amt * 100 / total)}%){tag}")
+            lines.append(f"{cat_icon(cat)} {cat:<15} {money(amt)} ({int(amt * 100 / total)}%)")
         lines.append("")
+    if c["skip_credit"]:
+        lines.append(f"↪️ {c['skip_credit']} money-in rows skipped ({money(Decimal(meta['credits_total']))}): this tracks spending only")
+    if c["skip_cash"]:
+        lines.append(f"🏧 {c['skip_cash']} ATM withdrawals skipped ({money(Decimal(meta['cash_total']))}): log what you spend the cash on")
     if c["duplicate"]:
         lines.append(f"♻️ {c['duplicate']} already imported before - skipped")
     if c["maybe"]:
-        lines.append(f"❓ {c['maybe']} look like entries you added by hand (same amount, ±1 day) - skipped unless you include them")
+        lines.append(f"❓ {c['maybe']} look like expenses you added by hand (same amount, ±1 day) - skipped unless you include them")
     if meta.get("dropped"):
         lines.append(f"⚠️ {meta['dropped']} unreadable rows ignored")
-    lines.append(f"✅ Ready to import {c['new']} new transactions.")
+    lines.append(f"\n✅ Ready to import {c['new']} new expenses.")
     return "\n".join(lines)
 
 
@@ -214,14 +203,13 @@ def preview_text(imp: StatementImport) -> str:
 class ImportResult:
     applied: int
     text: str
-    closing_balance: Decimal | None
 
 
 def _occurred(d: date) -> datetime | None:
     return None if d == now_local().date() else datetime.combine(d, time(12, 0), tzinfo=tz())
 
 
-async def _load_pending(session: AsyncSession, user_id: int, import_id: int, want: str) -> StatementImport:
+async def _load(session: AsyncSession, user_id: int, import_id: int, want: str) -> StatementImport:
     imp = (await session.execute(
         select(StatementImport).where(StatementImport.id == import_id, StatementImport.user_id == user_id).with_for_update()
     )).scalar_one_or_none()
@@ -234,58 +222,34 @@ async def _load_pending(session: AsyncSession, user_id: int, import_id: int, wan
 
 
 async def apply_import(session: AsyncSession, user_id: int, import_id: int, include_maybes: bool = False) -> ImportResult:
-    imp = await _load_pending(session, user_id, import_id, "pending")  # row lock + status flip = tap-twice safe
+    imp = await _load(session, user_id, import_id, "pending")  # row lock + status flip = tap-twice safe
     wanted = {"new", "maybe"} if include_maybes else {"new"}
     todo = sorted((i for i in imp.items if i["status"] in wanted), key=lambda i: i["date"])
-    this_month = now_local().strftime("%Y-%m")
-    spent_categories: set[str] = set()
-
+    created = []
     for i in todo:
-        amount, when, desc = Decimal(i["amount"]), _occurred(date.fromisoformat(i["date"])), i["description"]
-        common = dict(user_id=user_id, amount=amount, description=desc, occurred_at=when,
-                      external_key=i["key"], import_id=imp.id, allow_negative=True)  # statements are history: never refuse
-        if i["type"] == "credit":
-            await ledger.post(session, kind=TxnKind.INCOME, to_account=AccountType.BANK, category=i["category"], **common)
-        elif i["category"] == CASH_WITHDRAWAL:
-            await ledger.post(session, kind=TxnKind.TRANSFER, from_account=AccountType.BANK,
-                              to_account=AccountType.CASH, category="transfer", **common)
-        else:
-            await ledger.post(session, kind=TxnKind.EXPENSE, from_account=AccountType.BANK, category=i["category"], **common)
-            if i["date"][:7] == this_month:
-                spent_categories.add(i["category"])
-
+        created.append(await add_expense(
+            session, user_id, Decimal(i["amount"]), i["category"], i["description"], _occurred(date.fromisoformat(i["date"])),
+            source="statement", external_key=i["key"], import_id=imp.id,
+        ))
     imp.status = "done"
     imp.meta = {**imp.meta, "applied": len(todo)}
-    alerts = [a for c in sorted(spent_categories) if (a := await budgets.evaluate_alerts(session, user_id, c))]
-    bal = balances_line(await ledger.get_balances(session, user_id))
-    text = "\n".join([f"✅ Imported {len(todo)} transactions from {imp.filename}", *alerts, "", bal])
-    closing = imp.meta.get("closing_balance")
-    return ImportResult(len(todo), text, Decimal(closing) if closing else None)
+    this_month = now_local().strftime("%Y-%m")
+    alerts = await budgets.alerts_for(session, user_id, [e for e in created if to_local(e.occurred_at).strftime("%Y-%m") == this_month])
+    total = sum((e.amount for e in created), Decimal(0))
+    text = "\n".join([f"✅ Added {len(created)} expenses ({money(total)}) from {imp.filename}", *alerts])
+    return ImportResult(len(todo), text)
 
 
 async def cancel_import(session: AsyncSession, user_id: int, import_id: int) -> None:
-    imp = await _load_pending(session, user_id, import_id, "pending")
+    imp = await _load(session, user_id, import_id, "pending")
     imp.status = "cancelled"
 
 
 async def undo_import(session: AsyncSession, user_id: int, import_id: int) -> str:
-    imp = await _load_pending(session, user_id, import_id, "done")
-    ids = (await session.execute(
-        select(Transaction.id).where(Transaction.import_id == imp.id, Transaction.voided_at.is_(None)).order_by(Transaction.id)
-    )).scalars().all()
-    for tid in ids:
-        await ledger.void_transaction(session, user_id, tid)
+    imp = await _load(session, user_id, import_id, "done")
+    rows = (await session.execute(select(Expense).where(Expense.import_id == imp.id, Expense.voided_at.is_(None)))).scalars().all()
+    now = datetime.now(timezone.utc)
+    for e in rows:
+        e.voided_at = now
     imp.status = "undone"
-    bal = balances_line(await ledger.get_balances(session, user_id))
-    return f"↩️ Import undone - {len(ids)} transactions reversed.\n\n{bal}"
-
-
-async def set_bank_to_closing(session: AsyncSession, user_id: int, import_id: int) -> str:
-    imp = (await session.execute(
-        select(StatementImport).where(StatementImport.id == import_id, StatementImport.user_id == user_id)
-    )).scalar_one_or_none()
-    closing = imp.meta.get("closing_balance") if imp else None
-    if not closing:
-        raise StatementError("That statement has no closing balance.")
-    await ledger.set_balance(session, user_id, AccountType.BANK, Decimal(closing))
-    return f"🏦 Bank balance set to {money(Decimal(closing))} (statement closing).\n\n" + balances_line(await ledger.get_balances(session, user_id))
+    return f"↩️ Import undone - {len(rows)} expenses removed."

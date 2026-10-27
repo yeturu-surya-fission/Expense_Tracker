@@ -26,11 +26,13 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # create_all never alters existing tables: upgrade databases created before statement import existed
+        # create_all never alters existing tables: add columns introduced after a database was first created
         for ddl in (
-            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS external_key VARCHAR(40)",
-            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS import_id INTEGER",
-            "CREATE INDEX IF NOT EXISTS ix_transactions_external_key ON transactions (external_key)",
-            "CREATE INDEX IF NOT EXISTS ix_transactions_import_id ON transactions (import_id)",
+            "ALTER TABLE shared_expenses ADD COLUMN IF NOT EXISTS bundle_id VARCHAR(32)",
+            "ALTER TABLE debts ADD COLUMN IF NOT EXISTS bundle_id VARCHAR(32)",
+            "ALTER TABLE group_members ADD COLUMN IF NOT EXISTS left_at TIMESTAMPTZ",
+            "ALTER TABLE debts ADD COLUMN IF NOT EXISTS detail VARCHAR(500)",
+            "CREATE INDEX IF NOT EXISTS ix_shared_expenses_bundle_id ON shared_expenses (bundle_id)",
+            "CREATE INDEX IF NOT EXISTS ix_debts_bundle_id ON debts (bundle_id)",
         ):
             await conn.execute(text(ddl))

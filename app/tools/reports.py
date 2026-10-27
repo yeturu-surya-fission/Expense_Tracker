@@ -3,53 +3,34 @@ from langchain_core.tools import tool
 
 from app.core import views
 from app.core.periods import PeriodError
-from app.core.types import parse_account
 from app.db.session import session_scope
 from app.tools._common import user_id_from
 
-# How the LLM should write a period (also see the system prompt):
+# How the LLM should write a period:
 #   today, yesterday, this_week, last_7_days, last_30_days, this_month, last_month, this_year, all_time,
 #   a month 'YYYY-MM' (e.g. '2026-09' for September 2026), a day 'YYYY-MM-DD',
 #   or a range 'YYYY-MM-DD..YYYY-MM-DD'.
 
 
 @tool
-async def get_balances(config: RunnableConfig) -> str:
-    """Current cash balance, bank balance and total."""
-    async with session_scope() as s:
-        return await views.balance_text(s, user_id_from(config))
-
-
-@tool
-async def get_transactions(
-    config: RunnableConfig,
-    period: str = "all_time",
-    limit: int = 10,
-    kind: str | None = None,
-    category: str | None = None,
-    account: str | None = None,
-) -> str:
-    """Transaction history, newest first.
+async def get_expenses(config: RunnableConfig, period: str = "all_time", limit: int = 10, category: str | None = None) -> str:
+    """The user's expense history, newest first.
     period: today, yesterday, this_week, last_7_days, last_30_days, this_month, last_month, this_year, all_time,
     OR a month 'YYYY-MM' (September 2026 = '2026-09'), a day 'YYYY-MM-DD', or a range 'YYYY-MM-DD..YYYY-MM-DD'.
-    kind: expense|income|transfer|adjustment (optional). category / account ('cash'|'bank') optional filters. limit max 50."""
-    acct = parse_account(account)
+    category optional filter. limit max 50."""
     try:
         async with session_scope() as s:
-            return await views.recent_text(
-                s, user_id_from(config), period=period, limit=limit, kind=kind,
-                category=category, account=acct.value if acct else None,
-            )
+            return await views.recent_text(s, user_id_from(config), period=period, limit=limit, category=category)
     except PeriodError as e:
         return f"❌ {e}"
 
 
 @tool
 async def spending_summary(config: RunnableConfig, period: str = "this_month") -> str:
-    """Total spent, total income and spending per category for ONE period.
+    """Total spent and spending per category for ONE period.
     period: today, yesterday, this_week, last_7_days, last_30_days, this_month, last_month, this_year, all_time,
     OR a month 'YYYY-MM' (September 2026 = '2026-09'), a day 'YYYY-MM-DD', or a range 'YYYY-MM-DD..YYYY-MM-DD'
-    (e.g. 1st to 15th October 2026 = '2026-10-01..2026-10-15'). Transfers are excluded."""
+    (e.g. 1st to 15th October 2026 = '2026-10-01..2026-10-15')."""
     try:
         async with session_scope() as s:
             return await views.summary_text(s, user_id_from(config), period)
@@ -59,8 +40,8 @@ async def spending_summary(config: RunnableConfig, period: str = "this_month") -
 
 @tool
 async def monthly_trend(config: RunnableConfig, months: int = 6, category: str | None = None) -> str:
-    """Month-by-month comparison of spending and income for the last N months (default 6, max 24), with the
-    top categories per month. Use for 'trend', 'month wise', 'compare months', 'how has my food spending changed'.
+    """Month-by-month comparison of spending for the last N months (default 6, max 24), with the top categories
+    per month. Use for 'trend', 'month wise', 'compare months', 'how has my food spending changed'.
     Pass `category` to see only that category month by month."""
     async with session_scope() as s:
         return await views.trend_text(s, user_id_from(config), months, category)
