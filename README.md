@@ -129,4 +129,9 @@ the pause is saved in Postgres so it survives restarts.
 - A tool call can't depend on another tool's result in the same message (the AI picks all tools up front).
 - Free LLM tiers are rate limited per minute; the bot says so instead of hanging.
 - Locks are per process: run a single instance. No migration tool yet (tables are created at startup).
-- `docs/` describes the earlier cash/bank version; the README is current.
+- The `.pptx` files in `docs/` still describe the earlier cash/bank version.
+
+## More documentation
+- 🏗️ [Architecture](docs/ARCHITECTURE.md): system overview, layers, chat contexts, agent graph, data model, deployment, safety
+- 🔀 [Flows](docs/FLOWS.md): routing, expenses, splitting, the payment lifecycle, party netting, group setup and settle-up, statements, budgets
+- 🧠 [State graph](docs/STATE_GRAPH.md): how the agent loops (agent → tools → respond), with real traces and every possible path
