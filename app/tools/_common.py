@@ -1,26 +1,45 @@
 """Helpers shared by all tools."""
+from dataclasses import dataclass
+
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt
 
-from app.core.types import AccountType, is_cancel, parse_account
+from app.core.choices import is_cancel
 
-CHOOSE_ACCOUNT = "choose_account"
+
+@dataclass(frozen=True)
+class Opt:
+    """One answer the user can pick (shown as a button; the words let typed replies like 'equally' work too)."""
+    id: str
+    label: str
+    words: tuple[str, ...] = ()
 
 
 def user_id_from(config: RunnableConfig) -> int:
     return config["configurable"]["user_id"]
 
 
-def ask_account(question: str) -> AccountType | None:
-    """
-    Human-in-the-loop: pause the graph and ask the user cash or bank.
-    Returns the chosen account, or None if the user cancelled.
+def chat_type(config: RunnableConfig) -> str:
+    return config["configurable"].get("chat_type", "private")
 
-    The AgentRunner already screens the reply (button or free text) before resuming,
-    so only 'cash' / 'bank' / 'cancel' reach here.
-    NOTE: interrupt() re-runs this tool from the top on resume, so call it BEFORE any DB write.
+
+def group_chat_id(config: RunnableConfig) -> int | None:
+    return config["configurable"].get("group_chat_id")
+
+
+def ask_choice(question: str, options: list[Opt]) -> str | None:
     """
-    answer = interrupt({"type": CHOOSE_ACCOUNT, "question": question, "options": ["cash", "bank"]})
+    Human-in-the-loop: pause the graph and ask the user to pick one option.
+    Returns the chosen option id, or None if they cancelled.
+
+    The AgentRunner screens the reply (button or typed words) before resuming, so only an option id or 'cancel' arrives here.
+    NOTE: interrupt() re-runs the tool from the top on resume, so call it BEFORE any database write.
+    """
+    answer = interrupt({
+        "type": "choice",
+        "question": question,
+        "options": [{"id": o.id, "label": o.label, "words": list(o.words)} for o in options],
+    })
     if is_cancel(answer):
         return None
-    return parse_account(str(answer))
+    return answer if answer in {o.id for o in options} else None

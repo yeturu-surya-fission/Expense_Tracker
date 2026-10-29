@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     public_url: str = ""
     telegram_webhook_secret: str = ""
     allowed_telegram_ids: str = ""
+    bot_username: str = ""  # filled in at startup from Telegram
 
     # llm
     llm_api_key: str = ""
@@ -25,14 +26,15 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     groq_api_key: str = ""
 
-    # database
-    database_url: str = "postgresql+asyncpg://wall:wall@localhost:5432/wall"
+    # database (a NEW database: the old cash/bank schema is not reused)
+    database_url: str = "postgresql+asyncpg://expense:expense@localhost:5432/expense_tracker"
 
     # behaviour
     currency_symbol: str = "₹"
     timezone: str = "Asia/Kolkata"
-    allow_negative_balance: bool = False
     budget_alert_thresholds: str = "50,80,100"
+    reminder_every_hours: int = 48  # how often an unpaid share is re-sent to the person who owes it
+    ask_group_min_people: int = 4  # a split with this many people asks "one-off or create a group?"
     log_level: str = "INFO"
 
     @field_validator("*", mode="before")

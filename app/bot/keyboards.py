@@ -1,19 +1,19 @@
-from app.core.periods import month_key, month_label, shift_month
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+
+from app.core.periods import month_key, month_label, shift_month
 
 # Persistent menu under the text box. Label -> action; handled WITHOUT the LLM (instant).
 MENU = {
-    "💰 Balance": "balance",
-    "🧾 Recent": "recent",
     "📊 Summary": "summary",
+    "🧾 Recent": "recent",
     "🎯 Budgets": "budgets",
+    "👥 Friends": "friends",
+    "💳 Dues": "dues",
     "↩️ Undo last": "undo",
     "❓ Help": "help",
 }
 
 PERIODS = {"today": "Today", "this_week": "This week", "this_month": "This month", "last_month": "Last month"}
-
-_CHOICE_LABELS = {"cash": "💵 Cash", "bank": "🏦 Bank", "cancel": "✖ Cancel"}
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -25,27 +25,45 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
-def choice_keyboard(options: list[str]) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton(_CHOICE_LABELS.get(o, o), callback_data=f"hitl:{o}") for o in options]])
+def choice_keyboard(choices: list[dict], owner_telegram_id: int | None = None) -> InlineKeyboardMarkup:
+    """Answer buttons for a question. In a group chat the owner id is added so only the asker can answer."""
+    suffix = f":{owner_telegram_id}" if owner_telegram_id else ""
+    rows = [[InlineKeyboardButton(c["label"], callback_data=f"hitl:{c['id']}{suffix}")] for c in choices if c["id"] != "cancel"]
+    cancel = [c for c in choices if c["id"] == "cancel"]
+    if cancel:
+        rows.append([InlineKeyboardButton(cancel[0]["label"], callback_data=f"hitl:cancel{suffix}")])
+    return InlineKeyboardMarkup(rows)
 
 
-def result_keyboard(txn_ids: list[int]) -> InlineKeyboardMarkup:
-    row = []
+def result_keyboard(txn_ids: list[int], split_ids: list[int]) -> InlineKeyboardMarkup | None:
+    rows = []
     if txn_ids:
-        row.append(InlineKeyboardButton("↩️ Undo", callback_data="undo:" + ",".join(str(i) for i in txn_ids[:8])))
-    row.append(InlineKeyboardButton("💰 Balance", callback_data="menu:balance"))
-    return InlineKeyboardMarkup([row])
+        rows.append([InlineKeyboardButton("↩️ Undo", callback_data="undo:" + ",".join(str(i) for i in txn_ids[:8]))])
+    if split_ids:
+        rows.append([InlineKeyboardButton("↩️ Cancel this split", callback_data=f"undosplit:{split_ids[0]}")])
+    return InlineKeyboardMarkup(rows) if rows else None
 
 
-def undo_confirm_keyboard(txn_id: int) -> InlineKeyboardMarkup:
+def undo_confirm_keyboard(expense_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Yes, undo it", callback_data=f"undo:{txn_id}"),
+        InlineKeyboardButton("✅ Yes, undo it", callback_data=f"undo:{expense_id}"),
         InlineKeyboardButton("✖ Keep it", callback_data="keep"),
     ]])
 
 
+def settle_keyboard(group_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Yes, settle up", callback_data=f"gsettle:{group_id}"),
+        InlineKeyboardButton("✖ Not yet", callback_data="keep"),
+    ]])
+
+
+def start_bot_keyboard(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("▶️ Start the bot", url=url)]])
+
+
+# ---------------------------------------------------------------- summary / daily / trend with month navigation
 def _month_of(period: str) -> str:
-    """The calendar month a summary period refers to (for the Daily button and ◀ ▶)."""
     if period == "last_month":
         return shift_month(month_key(), -1)
     if len(period) == 7 and period[4] == "-":
@@ -54,19 +72,13 @@ def _month_of(period: str) -> str:
 
 
 def summary_keyboard(period: str) -> InlineKeyboardMarkup:
-    """Quick periods + ◀ ▶ month navigation + Daily / Trend views."""
     month = _month_of(period)
     nav = [InlineKeyboardButton(f"◀ {month_label(shift_month(month, -1))}", callback_data=f"sum:{shift_month(month, -1)}")]
     if month < month_key():
         nav.append(InlineKeyboardButton(f"{month_label(shift_month(month, 1))} ▶", callback_data=f"sum:{shift_month(month, 1)}"))
-    quick = [
-        InlineKeyboardButton(("● " if k == period else "") + label, callback_data=f"sum:{k}")
-        for k, label in PERIODS.items()
-    ]
+    quick = [InlineKeyboardButton(("● " if k == period else "") + label, callback_data=f"sum:{k}") for k, label in PERIODS.items()]
     return InlineKeyboardMarkup([
-        nav,
-        quick[:2],
-        quick[2:],
+        nav, quick[:2], quick[2:],
         [InlineKeyboardButton("📅 Daily", callback_data=f"day:{month}"), InlineKeyboardButton("📈 Trend", callback_data="trend:6")],
     ])
 
@@ -89,6 +101,7 @@ def trend_keyboard(months: int) -> InlineKeyboardMarkup:
     ]])
 
 
+# ---------------------------------------------------------------- statement import
 def import_keyboard(import_id: int, n_new: int, n_maybe: int) -> InlineKeyboardMarkup:
     rows = []
     if n_new:
@@ -99,8 +112,5 @@ def import_keyboard(import_id: int, n_new: int, n_maybe: int) -> InlineKeyboardM
     return InlineKeyboardMarkup(rows)
 
 
-def after_import_keyboard(import_id: int, closing: str | None) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton("↩️ Undo this import", callback_data=f"impundo:{import_id}")]]
-    if closing:
-        rows.insert(0, [InlineKeyboardButton(f"🏦 Set bank balance to {closing} (statement closing)", callback_data=f"impbal:{import_id}")])
-    return InlineKeyboardMarkup(rows)
+def after_import_keyboard(import_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Undo this import", callback_data=f"impundo:{import_id}")]])

@@ -1,53 +1,63 @@
 # Architecture
 
-Wall is a Telegram wallet-ledger agent. You talk to it in plain language; an LLM agent turns that into
-ledger entries in PostgreSQL. This page shows the **structure**: what the parts are and how they depend on
-each other. For step-by-step behaviour see [FLOWS.md](FLOWS.md).
+Expense Tracker is a Telegram bot for **personal expenses, budgets, and splitting bills with friends and groups**.
+You talk to it in plain language; an LLM agent turns that into records in PostgreSQL. There are **no bank or cash accounts**:
+"spent 300 on ice cream" just adds an expense.
+
+This page shows the **structure** (what the parts are). For behaviour step by step see [FLOWS.md](FLOWS.md); for how the AI
+agent loops see [STATE_GRAPH.md](STATE_GRAPH.md).
 
 ## 1. System overview
 
 ```mermaid
 flowchart LR
-    U["👤 User<br/>Telegram app"] <-->|"messages, buttons, PDFs"| TG["Telegram servers"]
-
-    subgraph APP["Wall service  (one container)"]
-        direction TB
-        API["FastAPI<br/>/health · /telegram/webhook"]
-        BOT["Bot layer<br/>handlers · keyboards"]
-        RUN["AgentRunner<br/>per-user lock · pause/resume"]
-        GRAPH["LangGraph agent<br/>agent → tools → respond"]
-        TOOLS["Tools<br/>LLM-facing, thin"]
-        CORE["Core<br/>ledger · budgets · reports<br/>views · statements · periods"]
-        PARSER["Statement parser<br/>(LLM, structured output)"]
-        LLMF["LLM factory<br/>provider chosen by API key"]
+    subgraph TGR["Telegram"]
+        PC["👤 Private chats"]
+        GC["👥 Group chats<br/>(the bot is added by the owner)"]
     end
 
-    TG <-->|"long polling (dev)<br/>or webhook (prod)"| BOT
-    TG -.->|webhook| API
-    API --> BOT
-    BOT -->|"free text"| RUN --> GRAPH --> TOOLS --> CORE
-    BOT -->|"menu buttons, /balance …<br/>(no LLM, instant)"| CORE
-    BOT -->|"PDF file"| PARSER --> CORE
-    GRAPH --> LLMF
-    PARSER --> LLMF
-    LLMF -->|HTTPS| LLM["☁️ Gemini / OpenAI /<br/>Anthropic / Groq"]
+    subgraph SVC["Expense Tracker service  (one container, FastAPI)"]
+        direction TB
+        BOT["Bot layer<br/>private · group · payment buttons · PDF"]
+        RUN["AgentRunner<br/>one thread per person per chat<br/>pause and resume"]
+        AG["LangGraph agent<br/>agent → tools → respond"]
+        TOOLS["Tools<br/>private set  ·  group set"]
+        CORE["Core  (no LLM, no Telegram)<br/>expenses · budgets · reports<br/>friends · splits · groups · debts<br/>notices · statements"]
+        PARSER["Statement parser<br/>(LLM, structured output)"]
+        NOT["Notifier<br/>private messages to other people"]
+        REM["Reminder loop<br/>every 30 minutes"]
+    end
 
-    CORE --> DB[("PostgreSQL<br/>ledger tables")]
-    GRAPH --> CK[("PostgreSQL<br/>LangGraph checkpoints<br/>chat memory + paused questions")]
+    LLM["☁️ Gemini / OpenAI /<br/>Anthropic / Groq"]
+    DB[("PostgreSQL<br/>expense tables +<br/>agent memory")]
+
+    PC <-->|"messages, buttons, files"| BOT
+    GC <-->|"@mentions, buttons"| BOT
+    BOT -->|"free text"| RUN --> AG --> TOOLS --> CORE
+    BOT -->|"menu buttons, /commands<br/>(no LLM, instant)"| CORE
+    BOT -->|"PDF file"| PARSER --> CORE
+    AG --> LLM
+    PARSER --> LLM
+    CORE --> DB
+    AG --> DB
+    CORE --> NOT
+    NOT -->|"bills, reminders, confirmations"| PC
+    REM --> CORE
+    REM --> NOT
 ```
 
 ## 2. Layers and the one rule that keeps it tidy
 
-Each layer only calls the ones **below** it. The LLM can never touch the database directly; it can only
-call tools, and tools only call `core`.
+Each layer only calls the ones **below** it. The LLM can never touch the database directly: it can only call tools, and tools
+only call `core`.
 
 ```mermaid
 flowchart TB
-    L1["<b>bot/</b>  Telegram handlers, keyboards"]
-    L2["<b>agent/</b>  graph, runner, prompts, guardrails, llm, statement_parser"]
-    L3["<b>tools/</b>  what the LLM may call"]
-    L4["<b>core/</b>  business logic, NO LLM, NO Telegram"]
-    L5["<b>db/</b>  SQLAlchemy models, async sessions"]
+    L1["<b>bot/</b>  Telegram I/O: private chat, group chat, payment buttons, PDF upload, notifier, reminders"]
+    L2["<b>agent/</b>  graph, runner, prompts, guardrails, LLM factory, statement parser"]
+    L3["<b>tools/</b>  what the LLM may call (different sets for private and group chats)"]
+    L4["<b>core/</b>  all the logic, NO LLM, NO Telegram"]
+    L5["<b>db/</b>  SQLAlchemy models and async sessions"]
     L6[("PostgreSQL")]
 
     L1 --> L2 --> L3 --> L4 --> L5 --> L6
@@ -56,105 +66,156 @@ flowchart TB
 
 | Folder | Responsibility | Key files |
 |---|---|---|
-| `app/bot/` | Telegram I/O: auth allow-list, menu, inline buttons, typing indicator, PDF upload | `handlers.py`, `keyboards.py`, `app.py` |
-| `app/agent/` | The brain: LangGraph graph, per-user runner (pause/resume), system prompt, scope guardrails, LLM provider factory, statement parser | `graph.py`, `runner.py`, `prompts.py`, `guardrails.py`, `llm.py`, `statement_parser.py` |
-| `app/tools/` | Thin LangChain tools; each validates input and delegates to `core` | `transactions.py`, `transfers.py`, `budgets.py`, `reports.py`, `conversation.py` |
-| `app/core/` | All money logic. The **only** code that changes balances is `ledger.py` | `ledger.py`, `budgets.py`, `reports.py`, `views.py`, `statements.py`, `periods.py`, `formatting.py` |
-| `app/db/` | Models and sessions (`session_scope` = commit or roll back) | `models.py`, `session.py` |
+| `app/bot/` | Telegram: allow-list, menu, buttons, typing indicator, group events, PDF upload, private notifications, reminder loop | `base.py`, `private.py`, `group.py`, `dues_flow.py`, `statement_flow.py`, `handlers.py` (button router), `notifier.py`, `reminders.py`, `keyboards.py` |
+| `app/agent/` | The brain: LangGraph graph, per-person runner (pause/resume), system prompt, scope guardrails, LLM provider factory, statement parser | `graph.py`, `runner.py`, `prompts.py`, `guardrails.py`, `llm.py`, `statement_parser.py` |
+| `app/tools/` | Thin LangChain tools: validate input, ask the human when something is missing, delegate to `core` | `expenses.py`, `budgets.py`, `reports.py`, `friends.py`, `splits.py`, `bills.py`, `groups.py`, `conversation.py` |
+| `app/core/` | **All the logic.** Money maths, splitting, settling, the pay/confirm lifecycle, every message sent to other people | `expenses.py`, `budgets.py`, `reports.py` + `views.py`, `friends.py`, `splits.py`, `groups.py`, `group_flow.py`, `debts.py`, `notices.py`, `notifier.py`, `statements.py`, `periods.py`, `markers.py` |
+| `app/db/` | Models and sessions (`session_scope` = commit or roll back); startup adds new columns to older databases | `models.py`, `session.py` |
 | `app/api/` | `/health`, `/telegram/webhook` | `routes.py` |
 
-## 3. Agent internals (LangGraph)
+There is **no internal REST API**: tools call `core` functions in the same process, so a tool call and its database changes
+commit or roll back together.
+
+## 3. Two chat contexts
+
+The same agent serves a private chat and a Telegram group chat, with different rules:
+
+| | Private chat | Group chat |
+|---|---|---|
+| Who may use it | the allow-list, friends of a listed person, and anyone in a group the owner added the bot to | **anyone in the group** |
+| When the bot reacts | every message, menu button, command | **only** an @mention, a reply to the bot, or a `/command` |
+| Tools the AI may call | own expenses, budgets, reports, friends, splits, `split_bills`, dues, cancel split, how to set up a group | `add_group_expense`, `split_bills`, `group_summary`, `settle_group`, `cancel_split` |
+| Personal money | yes | never (it would be visible to everyone) |
+| Setup | `/start` | **automatic** when an allowed person adds the bot to a group |
+
+A tool called in the wrong chat returns an error; the graph sends it back to the AI once so it can recover.
+
+## 4. Agent internals (LangGraph)
 
 ```mermaid
 flowchart TD
-    S([START]) --> A["<b>agent</b><br/>LLM + system prompt<br/>(date, budget categories)"]
-    A -->|"model called a tool"| T["<b>tools</b><br/>runs ONE tool call per step"]
-    A -->|"model wrote plain text<br/>🛡️ guardrail: dropped"| X["replaced by the<br/>fixed refusal message"] --> E([END])
+    S([START]) --> A["<b>agent</b><br/>LLM + system prompt<br/>(date, budget categories,<br/>friends or group members)"]
+    A -->|"model called a tool"| T["<b>tools</b><br/>runs ONE tool call per step<br/>(only tools allowed in this chat)"]
+    A -->|"model wrote plain text<br/>🛡️ guardrail: dropped"| X["replaced by the<br/>fixed refusal"] --> E([END])
     T -->|"more tool calls pending"| T
     T -->|"last call errored"| A
-    T -->|"all calls ok"| R["<b>respond</b><br/>build reply from tool output<br/>(no 2nd LLM call)"]
+    T -->|"all calls ok"| R["<b>respond</b><br/>reply built from tool output<br/>+ hidden markers → buttons"]
     R --> E
 
-    T -. "interrupt()" .-> H{{"⏸ paused: asks user<br/>cash or bank?"}}
-    H -. "user answers" .-> T
+    T -. "interrupt()" .-> H{{"⏸ paused: asks the user<br/>equally or amounts? settle now?"}}
+    H -. "user taps a button / answers" .-> T
 ```
 
-Why it is built this way:
-
 - **One tool call per step.** Every step is checkpointed, so a paused question never re-runs a write that already happened.
-- **`respond` instead of a second LLM call.** The reply text is built from tool output. About twice as fast, and the model cannot add free-form text.
-- **Pause = `interrupt()`.** The pending question is stored in Postgres, so it survives a restart.
+- **`respond` instead of a second LLM call.** The reply text is built from tool output: about twice as fast, and the model cannot add free text.
+- **Markers.** Tools may end their output with hidden markers such as `(split #5)` or `(start #123)`. `respond` strips them and passes
+  them to the bot as data, which turns them into the **Undo / Cancel split** buttons and the **"press Start"** tag for unreachable people.
 
-## 4. Data model
+## 5. Data model
 
 ```mermaid
 erDiagram
-    USERS ||--o{ ACCOUNTS : "has cash + bank"
-    USERS ||--o{ TRANSACTIONS : records
+    USERS ||--o{ FRIENDS : "owner calls friend by a nickname"
+    USERS ||--o{ EXPENSES : "spent"
     USERS ||--o{ BUDGETS : sets
     USERS ||--o{ STATEMENT_IMPORTS : uploads
     BUDGETS ||--o{ BUDGET_ALERTS : "fires once per threshold per month"
-    STATEMENT_IMPORTS ||--o{ TRANSACTIONS : "produced (import_id)"
+    STATEMENT_IMPORTS ||--o{ EXPENSES : "produced"
+    USERS ||--o{ GROUP_MEMBERS : "is in"
+    GROUPS ||--o{ GROUP_MEMBERS : has
+    GROUPS ||--o{ SHARED_EXPENSES : "group expenses"
+    SHARED_EXPENSES ||--o{ SHARES : "split into"
+    SHARES }o--o| EXPENSES : "becomes the person's own expense"
+    SHARED_EXPENSES ||--o{ DEBTS : "quick split"
+    GROUPS ||--o{ DEBTS : "settle-up"
 
     USERS {
         int id PK
         bigint telegram_id UK
         string name
+        timestamptz started_at "pressed Start: can be messaged"
     }
-    ACCOUNTS {
+    FRIENDS {
+        int owner_id FK
+        int friend_id FK
+        string nickname "private to the owner"
+    }
+    EXPENSES {
         int id PK
         int user_id FK
-        string type "cash or bank"
-        numeric balance
-    }
-    TRANSACTIONS {
-        int id PK
-        int user_id FK
-        string kind "expense, income, transfer, adjustment"
         numeric amount
         string category
-        string description
-        string from_account "money leaves"
-        string to_account "money enters"
+        string source "personal, split, statement"
         timestamptz occurred_at
-        timestamptz voided_at "set by undo"
-        string external_key "statement dedupe"
-        int import_id FK
+        timestamptz voided_at "undo"
+    }
+    GROUPS {
+        int id PK
+        bigint chat_id UK "the Telegram group"
+        string name "the chat title"
+        string default_split "equal = stop asking"
+    }
+    GROUP_MEMBERS {
+        int group_id FK
+        int user_id FK
+        timestamptz left_at "left the chat"
+    }
+    SHARED_EXPENSES {
+        int id PK
+        int group_id FK "null for a one-off split"
+        int payer_id FK
+        numeric amount
+        string bundle_id "bills split together"
+        timestamptz settled_at
+    }
+    SHARES {
+        int shared_expense_id FK
+        int user_id FK
+        numeric amount
+        int expense_id FK "set once recorded for them"
+    }
+    DEBTS {
+        int id PK
+        int debtor_id FK
+        int creditor_id FK
+        numeric amount
+        string kind "quick, group, bundle"
+        string detail "the bills behind the amount"
+        string status "pending, claimed, settled, cancelled"
     }
     BUDGETS {
-        int id PK
         int user_id FK
         string category
         numeric monthly_limit
     }
     BUDGET_ALERTS {
-        int id PK
         int budget_id FK
         string period "YYYY-MM"
         int threshold "50, 80, 100"
     }
     STATEMENT_IMPORTS {
-        int id PK
         int user_id FK
-        string status "pending, done, cancelled, undone"
+        string status
         jsonb items
-        jsonb meta
     }
 ```
 
-The ledger idea: every transaction has a `from_account` and/or a `to_account`.
+Nothing is ever deleted: **undo** sets `voided_at`. LangGraph keeps its own checkpoint tables in the same database
+(conversation memory and paused questions).
 
-| Kind | from | to | Example |
-|---|---|---|---|
-| expense | cash or bank | – | "spent 300 on ice cream" |
-| income | – | cash or bank | "got stipend 15k" |
-| transfer | bank | cash | "withdrew 2000" |
-| adjustment | one side | one side | "my bank balance is 5000" |
+### How money moves
 
-Nothing is ever deleted. **Undo** sets `voided_at` and reverses the balance effect.
-LangGraph also keeps its own checkpoint tables in the same database (conversation memory and paused questions).
+| Situation | What is stored | When it becomes someone's own expense |
+|---|---|---|
+| "spent 300 on ice cream" | one `expenses` row | immediately |
+| Quick split with friends | a `shared_expense` + a `share` per person + a `debt` per friend | the payer's share now; a friend's share when they tap **I paid** |
+| Several bills, different payers (a party) | several `shared_expenses` with one `bundle_id`, shares, and only the **netted** `debts` | people who owe nothing now; a debtor when they tap **I paid** (once, even if they owe two people) |
+| Group chat expense | a `shared_expense` + shares under the group | at settle-up: people who owe nothing now; a debtor on **I paid** |
+| Statement PDF | `expenses` rows (debits only) | on confirmation |
 
-## 5. Configuration and deployment
+Shares are exact to the paisa, and the odd paise rotate between people so nobody drifts ahead.
+
+## 6. Configuration and deployment
 
 ```mermaid
 flowchart LR
@@ -166,7 +227,7 @@ flowchart LR
     KEY -->|"sk-"| O["OpenAI"]
 
     subgraph DC["docker compose"]
-        W["app<br/>(FastAPI + bot)"] --> PG[("postgres:16")]
+        W["app<br/>(FastAPI + bot)"] --> PG[("postgres:16<br/>database expense_tracker<br/>volume pgdata_expense")]
     end
     CFG --> W
 ```
@@ -174,21 +235,25 @@ flowchart LR
 | Setting | Meaning |
 |---|---|
 | `TELEGRAM_MODE` | `polling` for local/dev, `webhook` for production (needs `PUBLIC_URL`) |
-| `ALLOWED_TELEGRAM_IDS` | allow-list of users; empty means everyone |
+| `ALLOWED_TELEGRAM_IDS` | the owner side: who may use the bot and add it to groups; empty means everyone |
 | `LLM_API_KEY` / `LLM_PROVIDER` / `LLM_MODEL` | the brain; provider is auto-detected from the key |
-| `ALLOW_NEGATIVE_BALANCE` | overdraft protection (statement imports may overdraw, since they are history) |
+| `REMINDER_EVERY_HOURS` | how often an unpaid share is re-sent (default 48) |
+| `ASK_GROUP_MIN_PEOPLE` | a one-off split this big first asks "one-off or create a group?" (default 4) |
 | `BUDGET_ALERT_THRESHOLDS` | default `50,80,100` |
 | `TIMEZONE` | decides what "today" and "this month" mean |
 
-## 6. Safety and reliability design
+## 7. Safety and reliability
 
 | Concern | How it is handled |
 |---|---|
-| LLM answers non-wallet questions | Prompt rules **plus** code: the model may only act through tools, and non-ledger replies are fixed text from `guardrails.py`. Free text from the model is replaced by the refusal. |
-| Wrong money maths | The LLM never computes balances; `ledger.py` does, inside one DB transaction with row locks. |
-| Double write after a pause | One tool call per graph step plus checkpointing. |
-| Double-tap on Import | Import row is locked and its status flips `pending → done`. |
-| Duplicate statement rows | Stable per-row key, so re-uploads are skipped; look-alikes of hand-entered rows are flagged. |
-| Hanging LLM | 25 s per request, 60 s per message hard cap, a friendly rate-limit message. |
-| Prompt injection inside a PDF | The parser LLM has no tools; every date and amount is re-validated in code; text is declared "data, not instructions". |
+| LLM answers non-expense questions | Prompt rules **plus** code: the model may only act through tools, and non-expense replies are fixed text. Free text from the model is replaced by the refusal. |
+| Wrong money maths | The LLM never calculates; `core` does, in one DB transaction with row locks. Shares are exact to the paisa. |
+| Strangers using the bot | Allow-list for private use; the bot **leaves** a group if a non-listed person adds it. Group members can use it only inside that group and for their own bills. |
+| Reading a group's private chat | It only acts on @mentions, replies and commands; with BotFather privacy mode ON Telegram does not even deliver other messages. |
+| Double write after a pause | One tool call per graph step plus checkpoints. |
+| Double tap on I paid / Import | Rows are locked and their status flips once. |
+| Duplicate statement rows | Stable key per row; look-alikes of hand-entered expenses are flagged. |
+| People the bot cannot message | They are tagged in the group with a Start button; the bill is delivered the moment they press Start. |
+| Hanging or slow LLM | 25 s per request, 60 s per message, a friendly rate-limit message. |
+| Prompt injection inside a PDF | The parser LLM has no tools; every date and amount is re-validated in code. |
 | Secrets | `.env` is git-ignored; httpx logging is silenced (its URLs contain the bot token). |

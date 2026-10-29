@@ -1,13 +1,12 @@
 # The agent's state graph
 
-The whole "brain" is a small LangGraph **state graph** with just three nodes: **agent**, **tools** and **respond**.
-This page explains exactly how a message moves through it, and answers the question that matters most:
+The whole "brain" is a small LangGraph **state graph** with three nodes: **agent**, **tools** and **respond**. This page explains how a
+message moves through it, and the question that matters most:
 
 > After a tool finishes, does the flow go back to the agent, or stay in the tools?
 
-**Short answer.** Normally it does **not** go back to the agent. It stays in `tools` until every tool the agent asked for has run,
-then goes to `respond` and finishes. It only returns to the agent when a tool **fails**.
-Details and real traces are below.
+**Short answer.** Normally it does **not** go back to the agent. It stays in `tools` until every tool the AI asked for has run, then goes to
+`respond` and finishes. It returns to the agent only when a tool **fails** (for example a tool that isn't allowed in this chat).
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md) (structure) · [FLOWS.md](FLOWS.md) (feature flows)
 
@@ -18,13 +17,13 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) (structure) · [FLOWS.md](FLOWS.md) 
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> agent : user message arrives
+    [*] --> agent : a message arrives (private chat, or @mention in a group)
 
     agent --> tools : the LLM asked for one or more tools
-    agent --> [*] : the LLM wrote plain text (guardrail replaces it with the refusal)
+    agent --> [*] : plain text from the LLM (replaced by the fixed refusal)
 
-    tools --> tools : more tool calls from the SAME LLM answer are still waiting
-    tools --> agent : the last tool call FAILED (give the LLM one chance to fix it)
+    tools --> tools : more tool calls from the SAME answer are waiting
+    tools --> agent : the last tool call FAILED (one chance to fix it)
     tools --> respond : every tool call finished OK
 
     respond --> [*] : reply built from the tool outputs
@@ -55,26 +54,37 @@ graph TD;
 
 | Node | What it does | Calls the LLM? |
 |---|---|---|
-| **agent** | Sends the system prompt (today's date, your budget categories) and recent chat to the LLM. The LLM answers with **tool calls**. | **Yes** |
-| **tools** | Runs **one** pending tool call (add expense, transfer, get balance…). Each tool talks to `core/` and the database. | No |
-| **respond** | Joins the tool outputs into one reply (and keeps the latest balance line). | No |
+| **agent** | Builds the system prompt (today's date, the person's budget categories and friends, or the group's name and members), sends the last 40 messages to the LLM **with the tool set for this chat type**, and gets back tool calls. If the LLM writes plain text instead, that text is thrown away and replaced by the fixed refusal. | **Yes** |
+| **tools** | Runs **one** pending tool call. Refuses a tool that isn't allowed in this chat (returns an error). May pause to ask the user a question. | No |
+| **respond** | Joins the tool results into one message, strips hidden markers (`(split #5)`, `(start #123)`) and passes them on as data so the bot can add **Undo / Cancel split** buttons and tag people who need to press Start. | No |
 
 ### The two routing rules (the only decisions in the graph)
-
-These are the two small functions in `graph.py`. Everything else is fixed.
 
 | After… | If… | Go to |
 |---|---|---|
 | **agent** | the LLM asked for tools | `tools` |
-| **agent** | the LLM wrote plain text instead | `END` (reply replaced by the fixed refusal) |
+| **agent** | the LLM wrote plain text instead | `END` (fixed refusal) |
 | **tools** | some tool calls from the same LLM answer have **not run yet** | `tools` again |
 | **tools** | everything has run and the last batch had an **error** | `agent` |
 | **tools** | everything has run and all were OK | `respond` |
 | **respond** | always | `END` |
 
+### Two tool sets, chosen by chat type
+
+```mermaid
+flowchart LR
+    A["agent node"] --> CT{"chat type"}
+    CT -->|"private chat"| PT["18 tools<br/>expenses · budgets · reports<br/>friends · split_expense · split_bills<br/>dues · cancel_split · how to set up a group"]
+    CT -->|"group chat"| GT["6 tools<br/>add_group_expense · split_bills<br/>group_summary · settle_group<br/>cancel_split · respond_to_user"]
+    PT --> TN["tools node<br/>rejects anything outside its set"]
+    GT --> TN
+```
+
+Personal money never appears in a group chat: the model isn't even shown those tools, and the tools node refuses them if they are called anyway.
+
 ---
 
-## 2. From typing in Telegram to the reply
+## 2. From a message to the reply
 
 ```mermaid
 sequenceDiagram
@@ -89,145 +99,155 @@ sequenceDiagram
     participant P as respond node
 
     U->>B: "spent 300 on ice cream"
-    B->>B: allow-list check, show typing…
-    B->>R: chat(text)
-    R->>A: start the graph with your message
-    A->>L: system prompt + chat history
+    B->>B: allowed? (in a group: was the bot mentioned?)
+    B->>R: chat(text, chat context)
+    R->>A: start the graph
+    A->>L: system prompt + chat history + this chat's tools
     L-->>A: tool call add_expenses(300, food, ice cream)
     A->>T: route to tools
-    T->>C: run the tool, update balances
-    C-->>T: "Spent ₹300… Balances…"
+    T->>C: run the tool, save the expense
+    C-->>T: "Spent ₹300… (#12)"
     T->>P: nothing left to run, all OK
-    P-->>R: final reply text
-    R-->>B: reply (+ Undo button data)
+    P-->>R: final text + data for the Undo button
+    R-->>B: reply
     B-->>U: reply with buttons
 ```
 
-In words:
-
-1. **You type** in Telegram. The bot checks you are allowed, shows "typing…" and hands the text to the `AgentRunner`.
-2. The runner starts the graph. The **agent** node asks the LLM *what to do*. The LLM does **not** answer you; it answers with a **tool call**
-   such as `add_expenses(amount=300, category="food")`.
-3. The graph moves to **tools**, which runs that tool. The tool writes to the database and returns text like
-   "Spent ₹300… Balances…".
-4. Nothing else is waiting, so the graph moves to **respond**, which turns the tool output into the message you see. **Done.**
-   The LLM was called **once**.
-
 ---
 
-## 3. What happens with 1, 3 or 4 tools?
+## 3. How many LLM calls? Real traces
 
-These are real traces recorded from the actual graph with scripted LLM answers (the same code paths the tests run).
+Recorded by running the real graph with scripted LLM answers and the current tools:
 
-### A. One tool: "what's my balance"
+### A. One tool
 
 ```
- 1. agent    LLM asked for 1 tool call: [get_balances]
- 2. tools    ran get_balances (success)
- 3. respond  built the reply from tool outputs
+ 1. agent    LLM asked for ['get_expenses']
+ 2. tools    get_expenses: success
+ 3. respond  reply built from tool output
  LLM calls: 1
 ```
 
-### B. Three tools in one message: "got 15k stipend in bank, spent 200 on tea in cash, withdrew 500"
+### B. Two tools in one message: "spent 300 on ice cream and set a food limit of 3k"
 
 ```
- 1. agent    LLM asked for 3 tool calls: [add_income, add_expenses, transfer_funds]
- 2. tools    ran add_income (success)
- 3. tools    ran add_expenses (success)
- 4. tools    ran transfer_funds (success)
- 5. respond  built the reply from tool outputs
+ 1. agent    LLM asked for ['add_expenses', 'set_budget']
+ 2. tools    add_expenses: success
+ 3. tools    set_budget: success
+ 4. respond  reply built from tool output
  LLM calls: 1
 ```
 
-This answers your main question. The LLM returns **all three** tool calls **together in one answer**. The graph then loops
-**inside `tools`** (steps 2 → 3 → 4), running one tool per step, and only then goes to `respond`.
-It does **not** go back to the agent between tools, so 3 tools still cost **1** LLM call. Four tools behave the same way: `tools` runs four times.
+The LLM returns **all** tool calls together; the graph loops **inside `tools`** (one per step) and only then goes to `respond`.
+Three or four tools cost the same single LLM call.
 
 ```mermaid
 flowchart LR
-    A["agent<br/>(1 LLM call)"] --> T1["tools<br/>call 1"] --> T2["tools<br/>call 2"] --> T3["tools<br/>call 3"] --> T4["tools<br/>call 4"] --> R["respond"] --> E([END])
+    A["agent<br/>(1 LLM call)"] --> T1["tools<br/>call 1"] --> T2["tools<br/>call 2"] --> T3["tools<br/>call 3"] --> R["respond"] --> E([END])
     T1 -. "self-loop: 'more calls waiting?' yes" .-> T2
 ```
 
-Why one tool per step instead of all at once? Every step is saved (checkpointed). If one tool has to pause and ask you "cash or bank?",
-only that tool waits, and tools that already finished are never run twice, so nothing is written twice.
+Why one tool per step? Every step is saved (checkpointed). If one tool has to pause and ask a question, only that tool waits, and tools that
+already finished are never run twice, so nothing is written twice.
 
-### C. A tool fails: the only time it returns to the agent
-
-```
- 1. agent    LLM asked for 1 tool call: [add_expenses]
- 2. tools    ran add_expenses (error)        <- e.g. invalid amount
- 3. agent    LLM asked for 1 tool call: [get_balances]   <- LLM sees the error and tries again
- 4. tools    ran get_balances (success)
- 5. respond  built the reply from tool outputs
- LLM calls: 2
-```
-
-When the last batch had an **error**, the graph goes back to **agent** and the LLM sees the error message and can correct its arguments.
-The error itself is never shown to you. `respond` only uses the successful results.
-
-### D. The model answers in plain text (breaking the rules)
+### C. A question to the user (human in the loop): "dining 3k split with surya"
 
 ```
- 1. agent    plain text -> guardrail
+ 1. agent    LLM asked for ['split_expense']
+ 2. tools    PAUSED: asks the user a question (state saved)
+ 3. --       user taps 'equal'
+ 4. tools    split_expense: success
+ 5. respond  reply built from tool output
  LLM calls: 1
 ```
 
-The text is thrown away and replaced by the fixed refusal, and the graph ends immediately. No tools run.
-
-### E. Pausing to ask you "cash or bank?"
+The pause happens **inside** `tools`. Tapping a button resumes the same tool; the agent isn't called again. The paused state lives in Postgres,
+so it survives a restart.
 
 ```mermaid
 stateDiagram-v2
     direction LR
-    agent --> tools : add_expenses, account = null
-    tools --> paused : interrupt() asks you cash or bank, state saved in Postgres
-    paused --> tools : you tap Cash / Bank (resume)
+    agent --> tools : split_expense, no split method said
+    tools --> paused : interrupt() asks equally or amounts, state saved in Postgres
+    paused --> tools : the user taps a button (resume)
     tools --> respond : finished OK
     respond --> [*]
 ```
 
-The pause happens **inside** the `tools` step. Your answer resumes the same tool; it does not start a new run through the agent.
-The paused state is in Postgres, so it survives a restart.
+### D. A tool that isn't allowed in this chat: the only time it goes back to the agent
+
+```
+ 1. agent    LLM asked for ['add_expenses']              (in a group chat)
+ 2. tools    add_expenses: error (not available in a group chat)
+ 3. agent    LLM asked for ['respond_to_user']           <- the LLM sees the error and tries again
+ 4. tools    respond_to_user: success
+ 5. respond  reply built from tool output
+ LLM calls: 2
+```
+
+### E. The model answers in plain text (breaking the rules)
+
+```
+ 1. agent    plain text -> replaced by the refusal
+ LLM calls: 1
+```
 
 ---
 
-## 4. What the "state" actually is
+## 4. Every possible path
 
-The graph state is just one list: `messages`. Each node adds to it. For case B (three tools) it grows like this:
+| # | What happens | Path through the graph | LLM calls |
+|---|---|---|---|
+| 1 | Normal request ("spent 300 on lunch") | START → agent → tools → respond → END | 1 |
+| 2 | Several actions in one message | agent → tools → tools → … → respond → END | 1 |
+| 3 | A question is needed (how to split, one-off or group, settle now?) | agent → tools (pauses) … you tap … tools resumes → respond → END | 1 |
+| 4 | A tool fails or isn't allowed here | agent → tools (error) → agent → tools → respond → END | 2 |
+| 5 | Greeting, off-topic, "need more info" | agent → tools (`respond_to_user`, fixed wording) → respond → END | 1 |
+| 6 | The AI breaks the rules with plain text | agent → END (the fixed refusal is sent) | 1 |
+| 7 | You cancel or change topic while a question waits | tools resumes with "cancel" → respond → END, then your new message starts at START | 0 + a new run |
+| 8 | Menu buttons, commands, **I paid / Received** taps, group `/group` and `/settle` | never enter the graph: answered straight from `core` | 0 |
+| 9 | Group chat message that doesn't mention the bot | ignored before the graph | 0 |
+
+A tool that keeps failing is stopped by a 40-step safety limit, and the user gets a friendly error.
+
+---
+
+## 5. What the "state" is
+
+The graph state is one list: `messages`. Each node adds to it (it never edits earlier entries). For "spent 300 on ice cream and set a food limit of 3k":
 
 | # | Added by | Message in the list |
 |---|---|---|
-| 1 | you | Human: "got 15k stipend…, spent 200 on tea…, withdrew 500" |
-| 2 | **agent** | AI: tool_calls = [add_income, add_expenses, transfer_funds] |
-| 3 | **tools** (step 1) | Tool result for add_income |
-| 4 | **tools** (step 2) | Tool result for add_expenses |
-| 5 | **tools** (step 3) | Tool result for transfer_funds |
-| 6 | **respond** | AI: the final reply (what you see) |
+| 1 | you | Human: "spent 300 on ice cream and set a food limit of 3k" |
+| 2 | **agent** | AI: tool_calls = [add_expenses, set_budget] |
+| 3 | **tools** (step 1) | Tool result for add_expenses |
+| 4 | **tools** (step 2) | Tool result for set_budget |
+| 5 | **respond** | AI: the final reply (what you see) |
 
-How the loop decides: after each tool, `pending_tool_calls()` looks at the last AI message and asks
-**"which of its tool calls don't have a result yet?"** Some are missing → `tools` again. None missing → check for errors → `agent` or `respond`.
+After each tool, `pending_tool_calls()` looks at the last AI message and asks **"which of its tool calls don't have a result yet?"**
+Some are missing → `tools` again. None missing → check for errors → `agent` or `respond`.
+
+The state is saved to Postgres after every step under a thread id of **person + chat** (`tg-<id>` in private, `tg-g<chat>-<id>` in a group),
+so each person has their own conversation memory and their own paused questions, even in the same group.
 
 ---
 
-## 5. Limits you should know about
+## 6. Limits you should know about
 
 | Limit | What it means |
 |---|---|
-| **No tool chains that depend on each other** | The LLM sees tool results only when something **fails**. So it cannot do "call `get_balances`, look at the answer, **then** decide to call `transfer_funds`" inside one message. It decides all tool calls up front. That fits this app (each message is a self-contained ledger action), but "if my cash is below 500, withdraw 1000" won't work as one command. |
-| **Retry loop is not tightly capped** | After an error the graph returns to `agent`. The prompt asks the LLM to retry once, but the real stop is LangGraph's `recursion_limit = 40` steps. If a tool keeps failing, the user sees the generic "brain hiccuped" message. |
+| **No tool chains that depend on each other** | The LLM sees tool results only when something fails, so it can't do "look at the result, **then** decide the next tool" within one message. It decides all tool calls up front. |
+| **Retry loop is not tightly capped** | After an error the graph returns to `agent`. The prompt asks for one retry, but the real stop is LangGraph's `recursion_limit = 40`. |
 | **Free text is never forwarded** | By design (the guardrail). Even a clarifying question goes through the `respond_to_user` tool. |
-
-If you want dependent tool chains, the change is small. Route `tools → agent` after **read-only** tools (balance, history) so the LLM can look at
-the result and decide the next step, while write tools still go straight to `respond`. That costs one extra LLM call only for those chained cases.
 
 ---
 
-## 6. Where this lives in the code
+## 7. Where this lives in the code
 
 | Piece | File |
 |---|---|
-| Graph, routing rules, `respond` node | `app/agent/graph.py` (`build_graph`, `after_agent`, `after_tools`, `pending_tool_calls`) |
-| Pause and resume (`interrupt`) | `app/tools/_common.py` (`ask_account`) and `app/agent/runner.py` |
-| Guardrail | `app/agent/guardrails.py`, `app/tools/conversation.py` |
-| Tests proving the behaviour | `tests/test_agent_flow.py` (`test_two_tool_calls_in_one_turn_run_sequentially`, `test_tool_error_goes_back_to_llm_for_a_retry`), `tests/test_guardrails.py` |
+| Graph, routing rules, `respond` node, per-chat tool sets | `app/agent/graph.py` |
+| Tool lists (private / group) | `app/tools/__init__.py` |
+| Pause and resume (`ask_choice` / `interrupt`) | `app/tools/_common.py`, `app/agent/runner.py` |
+| Hidden markers → buttons | `app/core/markers.py` |
+| Guardrail wording | `app/agent/guardrails.py`, `app/tools/conversation.py` |
