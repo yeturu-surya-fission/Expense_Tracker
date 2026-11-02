@@ -26,6 +26,7 @@ class AgentReply:
     txn_ids: list[int] = field(default_factory=list)  # expenses just recorded (Undo button)
     split_ids: list[int] = field(default_factory=list)  # splits just created (Cancel-split button)
     start_users: list[dict] = field(default_factory=list)  # [{telegram_id, name}] people who still need to press Start
+    dues: dict | None = None  # who owes whom, as data for the "I paid" buttons (after my_dues)
     group_id: int | None = None  # the expense group the reply is about (for the 'press Start' link)
 
 
@@ -83,7 +84,7 @@ class AgentRunner:
         text = (message_text(last_ai) if last_ai else "") or "Done."
         extra = last_ai.additional_kwargs if last_ai else {}
         return AgentReply(
-            text, txn_ids=extra.get("txn_ids", []), split_ids=extra.get("split_ids", []), start_users=extra.get("start_users", []), group_id=extra.get("group_id")
+            text, txn_ids=extra.get("txn_ids", []), split_ids=extra.get("split_ids", []), start_users=extra.get("start_users", []), group_id=extra.get("group_id"), dues=extra.get("dues")
         )
 
     async def _pending_interrupt(self, config) -> dict | None:

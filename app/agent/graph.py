@@ -186,6 +186,7 @@ def build_graph(llm: BaseChatModel, gateway: McpGateway, tool_defs: list[dict], 
             "split_ids": [i for n, d in data if n != "cancel_split" for i in d.get("split_ids", [])],
             "start_users": list({u["telegram_id"]: u for _, d in data for u in d.get("start_users", [])}.values()),
             "group_id": next((d["group_id"] for _, d in data if d.get("group_id")), None),
+            "dues": next((d["dues"] for _, d in data if d.get("dues")), None),
         }
         return {"messages": [AIMessage(content="\n".join(lines).strip() or "Done.", additional_kwargs=extras)]}
 

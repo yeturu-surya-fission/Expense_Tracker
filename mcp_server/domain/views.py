@@ -108,6 +108,23 @@ async def dues_text(s: AsyncSession, user_id: int) -> str:
     return "\n".join(lines)
 
 
+async def dues_data(s: AsyncSession, user_id: int) -> dict:
+    """The same totals as dues_text, as data a chat client turns into buttons (one per person)."""
+    owe, owed = await debts.dues(s, user_id)
+    out: dict[str, list] = {"owe": [], "owed": []}
+    for key, rows, field in (("owe", owe, "creditor_id"), ("owed", owed, "debtor_id")):
+        totals: dict[int, list] = {}
+        for d in rows:
+            t = totals.setdefault(getattr(d, field), [Decimal(0), Decimal(0)])
+            t[0] += d.amount
+            if d.status == "claimed":
+                t[1] += d.amount
+        for other_id, (total, claimed) in totals.items():
+            name = await friends.nickname_of(s, user_id, await friends.get_user(s, other_id))
+            out[key].append({"person_id": other_id, "name": name, "total": str(total), "claimed": str(claimed)})
+    return out
+
+
 async def _per_person(s: AsyncSession, user_id: int, rows, other_field: str, claimed_note: str) -> list[str]:
     """One line per person with the TOTAL, instead of one line per bill."""
     totals: dict[int, list] = {}

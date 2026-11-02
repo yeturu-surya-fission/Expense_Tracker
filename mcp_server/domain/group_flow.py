@@ -3,6 +3,7 @@ from sqlalchemy import select
 
 from mcp_server.db.models import Debt, User
 from mcp_server.db.session import session_scope
+from mcp_server.domain import debts as debt_logic
 from mcp_server.domain import friends, groups, notices, views
 from mcp_server.domain.errors import UserError
 from mcp_server.domain.formatting import money
@@ -38,6 +39,9 @@ async def settle_and_notify(group_id: int, member_count: int | None = None) -> t
     breakdown = {u.id: views.person_breakdown(res.share_items.get(u.id, []), res.paid_items.get(u.id, [])) for u in res.people}
     async with session_scope() as s:
         debts = list((await s.execute(select(Debt).where(Debt.id.in_(debt_ids)))).scalars().all()) if debt_ids else []
+        for off in await debt_logic.offset_new(s, debts):  # people who already owed each other (privately) cancel out
+            await notices.notify_offset(s, off, set(debt_ids))
+        debts = [d for d in debts if d.status == "pending"]
         unreachable = await notices.notify_settlement(s, res.group.name, res.people, res.transfers, debts, breakdown)
 
     footer = ("💸 Everyone has been sent exactly who to pay, privately. They tap 'I paid' and the person owed confirms."

@@ -120,6 +120,8 @@ class BotBase:
         """Send an agent reply with the right buttons. In group chats, answer buttons are tied to the person who asked."""
         if reply.choices:
             markup = kb.choice_keyboard(reply.choices, owner_telegram_id)
+        elif reply.dues and kb.dues_keyboard(reply.dues):
+            markup = kb.dues_keyboard(reply.dues)
         else:
             markup = kb.result_keyboard(reply.txn_ids, reply.split_ids)
         await message.reply_text(reply.text[:4000], reply_markup=markup)

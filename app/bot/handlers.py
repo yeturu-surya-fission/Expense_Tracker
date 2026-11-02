@@ -40,6 +40,10 @@ class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin):
         elif kind == "due":
             await self._due(q, tg, arg)
 
+        elif kind in ("payto", "recvfrom", "notyetfrom") and arg.isdigit():
+            action = {"payto": "pay", "recvfrom": "received", "notyetfrom": "notyet"}[kind]
+            await self._settle_with(q, tg, action, int(arg))
+
         elif kind == "gsettle":
             await self._settle_button(q, tg, context.bot)
 

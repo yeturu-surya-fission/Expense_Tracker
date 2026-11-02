@@ -292,3 +292,33 @@ async def test_a_message_that_was_replaced_is_deleted_from_the_chat(make_handler
     await owner.ok("cancel_split", split_id=r["data"]["split_ids"][0])
     await deliver_all(gateway, bot)
     assert (friend.telegram_id, sent_id) in bot.deleted
+
+
+async def test_dues_screen_has_pay_buttons_and_updates_in_place(make_handlers, gateway):
+    bot = FakeBot()
+    h = make_handlers()
+    kiran, surya = tg_user(new_telegram_id(), "Kiran"), tg_user(new_telegram_id(), "Surya")
+    for u in (kiran, surya):
+        await h.start(update(u, FakeMessage("/start", private_chat(u.id), u)), context(bot))
+    await h.call(h.private(kiran), "add_friend", nickname="Surya", telegram_id=surya.id)
+    for what, amount in (("tea", 100), ("pizza", 600)):
+        await h.call(h.private(kiran), "split_expense", amount=amount, description=what, with_friends=["Surya"], split="equal")
+
+    msg = FakeMessage("/dues", private_chat(surya.id), surya)
+    await h.on_command(update(surya, msg), context(bot))
+    shown = msg.sent[-1]
+    assert shown["text"].count("Kiran") == 1 and "₹350" in shown["text"] and "tea" not in shown["text"]
+    pay = [b for b in buttons(shown["markup"]) if b[0].startswith("✅ I paid Kiran")][0]
+    assert pay[0] == "✅ I paid Kiran ₹350" and pay[1].startswith("payto:")
+
+    q, coro = tap(h, bot, surya, FakeMessage(shown["text"], msg.chat), pay[1])
+    await coro
+    assert "you paid Kiran ₹350" in q.edited[-1]["text"] and "waiting for them to confirm" in q.edited[-1]["text"]
+    assert not [b for b in buttons(q.edited[-1]["markup"]) if "I paid" in b[0]]  # nothing left to pay
+
+    await deliver_all(gateway, bot)
+    claim = [m for m in bot.sent if m["chat_id"] == kiran.id and "says they paid you" in m["text"]][0]
+    got = [b for b in buttons(claim["markup"]) if b[0] == "✅ Received"][0]
+    q, coro = tap(h, bot, kiran, FakeMessage(claim["text"], private_chat(kiran.id)), got[1])
+    await coro
+    assert "All settled" in q.edited[-1]["text"]

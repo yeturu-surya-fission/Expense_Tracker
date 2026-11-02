@@ -6,7 +6,8 @@ from sqlalchemy import select
 from mcp_server.config import settings
 from mcp_server.db.models import Debt
 from mcp_server.db.session import session_scope
-from mcp_server.domain import budgets, friends, notices, splits, views
+from mcp_server.domain import budgets, expenses, friends, notices, splits, views
+from mcp_server.domain import debts as debt_logic
 from mcp_server.domain.formatting import cat_icon, money
 from mcp_server.tools._common import Opt, Out, ask_choice
 from mcp_server.tools.registry import tool
@@ -95,6 +96,7 @@ async def split_expense(
 
     # ---- do it
     async with session_scope() as s:
+        replaced = await expenses.void_if_just_logged(s, uid, amount) if payer.id == uid else None
         shares = splits.equal_shares(Decimal(str(amount)), [p.id for p in people]) if mode == "equal" \
             else splits.exact_shares(Decimal(str(amount)), {u.id: a for u, a in named})
         res = await splits.create_split(
@@ -112,24 +114,45 @@ async def split_expense(
     # ---- tell the friends (queued after the data is saved)
     delivered: dict[int, bool] = {}
     debtor_to_debt: dict[int, int] = {}
+    netted: dict[int, tuple[str, Decimal]] = {}  # debt id -> ("settled" | "reduced", amount now)
+    net_notes: list[str] = []
     if debt_ids:
         async with session_scope() as s:
             debts = list((await s.execute(select(Debt).where(Debt.id.in_(debt_ids)))).scalars().all())
-            delivered = await notices.notify_new_debts(s, debts)
+            # people who already owed each other cancel out (a friend's bill for you, your bill for them)
+            for off in await debt_logic.offset_new(s, debts):
+                net_notes.append((await notices.notify_offset(s, off, set(debt_ids))).get(uid, ""))
+            for d in debts:
+                if d.status == "settled":
+                    netted[d.id] = ("settled", Decimal(0))
+            pending = [d for d in debts if d.status == "pending"]
+            delivered = await notices.notify_new_debts(s, pending)
+            for d in pending:
+                if d.amount != next(sh for p_, sh, _n in lines_info if p_.id == d.debtor_id):
+                    netted[d.id] = ("reduced", d.amount)
             debtor_to_debt = {d.debtor_id: d.id for d in debts}
 
     how = "equally" if mode == "equal" else "by the amounts you gave"
     out = [f"{cat_icon(category)} Split #{split_id} · {description} {money(amount)} · paid by {who_paid} · {how}"]
+    if replaced:
+        out.append(f"♻️ Your plain expense #{replaced.id} ({money(replaced.amount)}) is replaced by this split, so it isn't counted twice.")
     unreachable = []
     for p, share, nick in lines_info:
         if p.id == payer.id:
             out.append(f"• {nick}: {money(share)} (saved to {'your' if p.id == uid else 'their'} expenses)")
             continue
-        sent = delivered.get(debtor_to_debt.get(p.id, -1), False)
+        debt_id = debtor_to_debt.get(p.id, -1)
         verb = "owe" if nick == "You" else "owes"
-        out.append(f"• {nick} {verb} {money(share)} " + ("✓ notified" if sent or p.id == uid else "⚠ not notified yet"))
+        how_netted = netted.get(debt_id)
+        if how_netted and how_netted[0] == "settled":
+            out.append(f"• {nick} {verb} {money(share)} · cancelled out by what is owed the other way ✓")
+            continue
+        sent = delivered.get(debt_id, False)
+        extra = f" (now {money(how_netted[1])} after netting)" if how_netted else ""
+        out.append(f"• {nick} {verb} {money(share)}{extra} " + ("✓ notified" if sent or p.id == uid else "⚠ not notified yet"))
         if not sent and p.id != uid:
             unreachable.append((p, nick))
+    out.extend(n for n in net_notes if n)
     out.extend(alerts)
     if unreachable:
         out.append(notices.not_started_hint([nick for _, nick in unreachable]))
@@ -140,10 +163,10 @@ async def split_expense(
 
 
 @tool(contexts=("private",))
-async def my_dues(call) -> str:
-    """Show who the user owes money to and who owes the user money (split bills and group settlements)."""
+async def my_dues(call) -> Out:
+    """Show who the user owes money to and who owes the user money (split bills and group settlements), one total per person."""
     async with session_scope() as s:
-        return await views.dues_text(s, call.user_id)
+        return Out(await views.dues_text(s, call.user_id), {"dues": await views.dues_data(s, call.user_id)})
 
 
 @tool(contexts=("private", "group"), write=True)

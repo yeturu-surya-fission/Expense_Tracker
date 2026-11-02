@@ -6,6 +6,7 @@ from sqlalchemy import select
 from mcp_server.config import settings
 from mcp_server.db.models import Debt
 from mcp_server.db.session import session_scope
+from mcp_server.domain import debts as debt_logic
 from mcp_server.domain import friends, group_flow, groups, notices, splits, views
 from mcp_server.domain.formatting import money
 from mcp_server.tools._common import Out, ask_choice
@@ -97,9 +98,13 @@ async def split_bills(
 
     # ---- queue everyone's bill (after the data is saved)
     unreachable = []
+    net_notes: list[str] = []
     if res.debts or res.logged:
         async with session_scope() as s:
             debts = list((await s.execute(select(Debt).where(Debt.id.in_(debt_ids)))).scalars().all()) if debt_ids else []
+            for off in await debt_logic.offset_new(s, debts):  # people who already owed each other cancel out
+                net_notes.append((await notices.notify_offset(s, off, set(debt_ids))).get(uid, ""))
+            debts = [d for d in debts if d.status == "pending"]
             by_id = {p.id: p for p in people}
             transfers = [(by_id[a], by_id[b], amt) for a, b, amt in res.transfers]
             breakdown = {p.id: views.person_breakdown(res.share_items.get(p.id, []), res.paid_items.get(p.id, [])) for p in people}
@@ -116,6 +121,8 @@ async def split_bills(
         header=f"🎉 {title} · {len(bills)} bills · total {money(res.total)} · equally among {len(people)} (about {money(each)} each)",
         names=names, nets=res.net(), transfers=res.transfers, shares=res.share_items, paid=res.paid_items, footer=footer,
     )]
+    if not in_group:
+        out.extend(n for n in net_notes if n)
     start_users = group_flow.people_data(unreachable) if in_group else []
     if unreachable and not in_group:
         out.append(notices.not_started_hint([friends.display(u) for u in unreachable]))

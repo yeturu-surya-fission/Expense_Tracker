@@ -60,7 +60,10 @@ class PrivateMixin(BotBase):
             res = await self.call(ident, "last_expense")
             expense_id = res.data.get("expense_id")
             await message.reply_text(res.message, reply_markup=kb.undo_confirm_keyboard(expense_id) if expense_id else None)
-        elif action in ("recent", "budgets", "friends", "dues", "invite"):
+        elif action == "dues":
+            res = await self.call(ident, "ui_view", view="dues")
+            await message.reply_text(res.message, reply_markup=kb.dues_keyboard(res.data.get("dues")))
+        elif action in ("recent", "budgets", "friends", "invite"):
             await message.reply_text((await self.call(ident, "ui_view", view=action)).message)
 
     async def on_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

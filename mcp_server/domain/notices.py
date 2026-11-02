@@ -188,3 +188,87 @@ def group_setup_help(name: str | None = None) -> str:
         f"3. Anyone in the group can now mention me, e.g. '@{bot} I paid 1000 for petrol'.",
         f"4. When you're done, say '@{bot} split the bill'. I post who owes what and send each person their bill privately.",
     ])
+
+
+async def notify_offset(session: AsyncSession, off, new_debt_ids: set[int]) -> dict[int, str]:
+    """
+    Tell both people that what they owed each other was netted. Older bills that are gone disappear from the debtor's chat;
+    older bills that remain (for less) are re-sent with the new amount. Bills of the debts just created are not sent yet by
+    the caller, so they need no clean-up. Returns {user id: that person's text} so the caller can repeat it in its own reply.
+    """
+    from mcp_server.domain.debts import pending_between  # local import: debts imports splits, not notices
+
+    a, b = await friends.get_user(session, off.person_a), await friends.get_user(session, off.person_b)
+    for d in off.settled:
+        if d.id not in new_debt_ids:
+            debtor = a if d.debtor_id == a.id else b
+            await _forget(session, debtor, d.debtor_msg_id, ("debts", d.id, "debtor_msg_id"))
+            d.debtor_msg_id = None
+    again = [d for d in off.reduced if d.id not in new_debt_ids]
+    for d in again:
+        debtor = a if d.debtor_id == a.id else b
+        await _forget(session, debtor, d.debtor_msg_id, ("debts", d.id, "debtor_msg_id"))
+        d.debtor_msg_id = None
+    if again:
+        await notify_new_debts(session, again)
+
+    a_owes, b_owes = await pending_between(session, a.id, b.id), await pending_between(session, b.id, a.id)
+    lines = []
+    for me, other, mine, theirs in ((a, b, a_owes, b_owes), (b, a, b_owes, a_owes)):
+        who = await friends.nickname_of(session, me.id, other)
+        if mine > 0:
+            now = f"You still owe {who} {money(mine)}."
+        elif theirs > 0:
+            now = f"{who} still owes you {money(theirs)}."
+        else:
+            now = "You're all even."
+        lines.append((me, who, now))
+    texts = {}
+    for me, who, now in lines:
+        texts[me.id] = f"🔁 You and {who} owed each other, so {money(off.amount)} was netted off. {now}"
+        await _send(session, me, texts[me.id])
+    return texts
+
+
+# ---------------------------------------------------------------- one message for several debts between the same two people
+def _what(debts: list[Debt]) -> str:
+    names = list(dict.fromkeys(d.description for d in debts))
+    return ", ".join(names[:4]) + (f" +{len(names) - 4} more" if len(names) > 4 else "")
+
+
+async def _pair(session: AsyncSession, debts: list[Debt]) -> tuple[User, User, Decimal]:
+    debtor, creditor = await friends.get_user(session, debts[0].debtor_id), await friends.get_user(session, debts[0].creditor_id)
+    return debtor, creditor, sum((d.amount for d in debts), Decimal(0))
+
+
+async def notify_claim_bulk(session: AsyncSession, debts: list[Debt]) -> bool:
+    """The debtor says they paid several debts at once: ONE message to the creditor, with one Received / Not yet pair."""
+    if len(debts) == 1:
+        return await notify_claim(session, debts[0])
+    debtor, creditor, total = await _pair(session, debts)
+    who = await friends.nickname_of(session, creditor.id, debtor)
+    text = f"💰 {who} says they paid you {money(total)} ({_what(debts)}).\nDid you receive it?"
+    buttons = [[Button("✅ Received", data=f"recvfrom:{debtor.id}"), Button("✖ Not yet", data=f"notyetfrom:{debtor.id}")]]
+    ok = await _send(session, creditor, text, buttons, ("debts", debts[0].id, "creditor_msg_id"))
+    if ok:
+        debts[0].creditor_msg_id = QUEUED
+    await session.flush()
+    return ok
+
+
+async def notify_confirmed_bulk(session: AsyncSession, debts: list[Debt]) -> None:
+    if len(debts) == 1:
+        return await notify_confirmed(session, debts[0])
+    debtor, creditor, total = await _pair(session, debts)
+    who = await friends.nickname_of(session, debtor.id, creditor)
+    await _send(session, debtor, f"🎉 {who} confirmed your payment of {money(total)} ({_what(debts)}). All settled!")
+
+
+async def notify_rejected_bulk(session: AsyncSession, debts: list[Debt]) -> None:
+    if len(debts) == 1:
+        return await notify_rejected(session, debts[0])
+    debtor, creditor, total = await _pair(session, debts)
+    who = await friends.nickname_of(session, debtor.id, creditor)
+    text = (f"⚠️ {who} says they haven't received {money(total)} ({_what(debts)}) yet.\n"
+            "It's back on your list, and I took it out of your expenses.")
+    await _send(session, debtor, text, [[Button("✅ I paid", data=f"payto:{creditor.id}")]])

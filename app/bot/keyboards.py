@@ -44,6 +44,27 @@ def result_keyboard(txn_ids: list[int], split_ids: list[int]) -> InlineKeyboardM
     return InlineKeyboardMarkup(rows) if rows else None
 
 
+def _rupees(value: str) -> str:
+    n = float(value)
+    return f"₹{n:,.0f}" if n == int(n) else f"₹{n:,.2f}"
+
+
+def dues_keyboard(dues: dict | None) -> InlineKeyboardMarkup | None:
+    """One button per person: pay everything you owe them, or confirm what they say they paid you."""
+    rows = []
+    for d in (dues or {}).get("owe", []):
+        unpaid = float(d["total"]) - float(d["claimed"])
+        if unpaid > 0:
+            rows.append([InlineKeyboardButton(f"✅ I paid {d['name']} {_rupees(str(unpaid))}", callback_data=f"payto:{d['person_id']}")])
+    for d in (dues or {}).get("owed", []):
+        if float(d["claimed"]) > 0:
+            rows.append([
+                InlineKeyboardButton(f"✅ Received from {d['name']} {_rupees(d['claimed'])}", callback_data=f"recvfrom:{d['person_id']}"),
+                InlineKeyboardButton("✖ Not yet", callback_data=f"notyetfrom:{d['person_id']}"),
+            ])
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
 def undo_confirm_keyboard(expense_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Yes, undo it", callback_data=f"undo:{expense_id}"),

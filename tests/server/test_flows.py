@@ -92,6 +92,20 @@ async def test_split_asks_first_and_writes_nothing_until_answered(harness, alice
     assert "450" in (await bob.ok("my_dues"))["text"]
 
 
+async def test_splitting_an_expense_just_logged_does_not_count_it_twice(harness, alice, bob):
+    await befriend(alice, bob, "Bob")
+    await alice.ok("add_expenses", items=[{"amount": 500, "category": "fuel", "description": "petrol"}])
+    r = await alice.ok("split_expense", amount=500, description="petrol", category="fuel", with_friends=["Bob"], split="equal")
+    assert "replaced" in r["text"]
+    assert "250" in (await alice.ok("spending_summary"))["text"] and "750" not in (await alice.ok("spending_summary"))["text"]
+    assert await count_expenses(alice.user_id) == 1  # only her ₹250 share
+
+    # a different amount is a different purchase: it is kept
+    await alice.ok("add_expenses", items=[{"amount": 80, "category": "food", "description": "tea"}])
+    await alice.ok("split_expense", amount=500, description="movie", category="fun", with_friends=["Bob"], split="equal")
+    assert await count_expenses(alice.user_id) == 3
+
+
 async def test_asking_twice_with_the_same_answer_writes_once(harness, alice, bob):
     await befriend(alice, bob, "Bob")
     args = dict(amount=100, description="tea", with_friends=["Bob"], answers={"split_mode": "equal"}, idempotency_key="call-1")
@@ -443,3 +457,59 @@ async def test_dues_show_one_total_per_person(harness, alice, bob):
     assert owed.count("Bob") == 1 and "₹500" in owed and "tea" not in owed and "pizza" not in owed  # 50 + 300 + 150
     owes = (await bob.ok("my_dues"))["text"]
     assert owes.count("Alice") == 1 and "₹500" in owes
+
+
+# ------------------------------------------------------------------ netting what two people owe each other
+async def test_what_two_friends_owe_each_other_cancels_out(harness, alice, bob):
+    await befriend(alice, bob, "Bob")
+    await befriend(bob, alice, "Alice")
+    await drain(harness)
+    await alice.ok("split_expense", amount=400, description="pizza", with_friends=["Bob"], split="equal")  # Bob owes 200
+    await drain(harness)
+    one = await bob.ok("split_expense", amount=200, description="juice", with_friends=["Alice"], split="equal")  # Alice owes 100
+    assert "netted off" in one["text"] and "₹100" in one["text"]
+    two = await bob.ok("split_expense", amount=200, description="tea", with_friends=["Alice"], split="equal")  # another 100
+    assert "cancelled out" in two["text"] and "all even" in two["text"]
+    assert "all clear" in (await alice.ok("my_dues"))["text"].lower() and "all clear" in (await bob.ok("my_dues"))["text"].lower()
+    # both people still have their own shares in their expenses, and nothing is owed
+    assert await count_expenses(alice.user_id) == 3 and await count_expenses(bob.user_id) == 3
+    told = await drain(harness)
+    assert any("netted off" in (m["text"] or "") for m in for_person(told, alice.telegram_id))
+    assert any("netted off" in (m["text"] or "") for m in for_person(told, bob.telegram_id))
+
+
+async def test_partial_netting_leaves_one_smaller_total(harness, alice, bob):
+    await befriend(alice, bob, "Bob")
+    await befriend(bob, alice, "Alice")
+    await alice.ok("split_expense", amount=2000, description="trip", with_friends=["Bob"], split="equal")  # Bob owes 1000
+    await bob.ok("split_expense", amount=200, description="pizza", with_friends=["Alice"], split="equal")  # Alice owes 100
+    await bob.ok("split_expense", amount=200, description="juice", with_friends=["Alice"], split="equal")  # Alice owes 100
+    owed = (await alice.ok("my_dues"))["text"]
+    assert "Bob  ₹800" in owed and "You owe" not in owed
+    owes = (await bob.ok("my_dues"))["text"]
+    assert "Alice  ₹800" in owes and "Owed to you" not in owes
+
+
+# ------------------------------------------------------------------ paying from the dues screen
+async def test_dues_screen_pays_a_person_in_one_tap(harness, alice, bob):
+    await befriend(alice, bob, "Bob")
+    for what, amount in (("tea", 100), ("pizza", 600)):
+        await alice.ok("split_expense", amount=amount, description=what, with_friends=["Bob"], split="equal")
+    await drain(harness)
+    dues = (await bob.ok("my_dues"))["data"]["dues"]
+    assert len(dues["owe"]) == 1 and dues["owe"][0]["total"] == "350.00" and dues["owe"][0]["claimed"] == "0"
+    pid = dues["owe"][0]["person_id"]
+    paid = await bob.ok("settle_with", person_id=pid, action="pay")
+    assert "₹350" in paid["text"] and await count_expenses(bob.user_id) == 2
+    claim = for_person(await drain(harness), alice.telegram_id)
+    assert len(claim) == 1 and "₹350" in claim[0]["text"]  # ONE message for both bills
+    assert [b["data"].split(":")[0] for b in claim[0]["buttons"][0]] == ["recvfrom", "notyetfrom"]
+    assert (await bob.call("settle_with", person_id=pid, action="pay"))["status"] == "rejected"  # nothing left to pay
+    mine = (await alice.ok("my_dues"))["data"]["dues"]["owed"][0]
+    assert mine["claimed"] == "350.00"
+    refuse = await alice.ok("settle_with", person_id=bob.user_id, action="notyet")
+    assert "still unpaid" in refuse["text"] and await count_expenses(bob.user_id) == 0
+    await bob.ok("settle_with", person_id=pid, action="pay")
+    done = await alice.ok("settle_with", person_id=bob.user_id, action="received")
+    assert "All settled" in done["text"]
+    assert "all clear" in (await bob.ok("my_dues"))["text"].lower()

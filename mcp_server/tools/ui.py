@@ -28,6 +28,7 @@ async def ui_view(call, view: str, arg: str | None = None) -> Out:
     daily (arg = 'YYYY-MM'), trend (arg = number of months), invite (the user's friend-invite link)."""
     if view not in VIEWS:
         raise UserError(f"Unknown view '{view}'.")
+    data: dict = {}
     async with session_scope() as s:
         uid = call.user_id
         if view == "summary":
@@ -40,6 +41,7 @@ async def ui_view(call, view: str, arg: str | None = None) -> Out:
             text = await views.friends_text(s, uid)
         elif view == "dues":
             text = await views.dues_text(s, uid)
+            data = {"dues": await views.dues_data(s, uid)}
         elif view == "daily":
             text = await views.daily_text(s, uid, arg)
         elif view == "trend":
@@ -49,7 +51,7 @@ async def ui_view(call, view: str, arg: str | None = None) -> Out:
             link = notices.start_link(f"inv_{user.telegram_id}")
             text = (f"🔗 Send this link to a friend. When they open it, you become friends automatically:\n{link}"
                     if link else "The bot link isn't ready yet. Try again in a moment.")
-    return Out(text, {"view": view, "arg": arg or ""})
+    return Out(text, {"view": view, "arg": arg or "", **data})
 
 
 @tool(contexts=("private",))
@@ -197,3 +199,52 @@ async def statement_undo(call, import_id: int) -> str:
     """Undo a finished statement import (all its expenses are removed)."""
     async with session_scope() as s:
         return await statements.undo_import(s, call.user_id, import_id)
+
+
+@tool(contexts=("private",), write=True)
+async def settle_with(call, person_id: int, action: str) -> Out:
+    """The buttons of the dues screen, one per person instead of one per bill.
+    action: 'pay' (I paid this person everything I owe them), 'received' (this person paid me, I confirm it),
+    'notyet' (this person says they paid but I haven't received it). person_id is the id shown with the dues."""
+    uid = call.user_id
+    if action not in ("pay", "received", "notyet"):
+        raise UserError(f"Unknown action '{action}'.")
+    status, debtor_id, creditor_id = ("pending", uid, person_id) if action == "pay" else ("claimed", person_id, uid)
+    async with session_scope() as s:
+        rows = list((await s.execute(
+            select(Debt).where(Debt.status == status, Debt.debtor_id == debtor_id, Debt.creditor_id == creditor_id).order_by(Debt.id)
+        )).scalars().all())
+        if not rows:
+            raise UserError("There is nothing left to do with that person: it was already handled.")
+        ids = [d.id for d in rows]
+        other = await friends.get_user(s, person_id)
+        who = await friends.nickname_of(s, uid, other)
+        total = sum((d.amount for d in rows), Decimal(0))
+        logged, alerts = Decimal(0), []
+        created = []
+        for debt_id in ids:
+            if action == "pay":
+                _, exps = await debts.claim(s, debt_id, uid)
+                created += exps
+            elif action == "received":
+                await debts.confirm(s, debt_id, uid)
+            else:
+                await debts.reject(s, debt_id, uid)
+        if action == "pay":
+            alerts = await budgets.alerts_for(s, uid, created)
+            logged = sum((e.amount for e in created), Decimal(0))
+    async with session_scope() as s:  # tell the other person (after the data is saved)
+        fresh = list((await s.execute(select(Debt).where(Debt.id.in_(ids)).order_by(Debt.id))).scalars().all())
+        if action == "pay":
+            await notices.notify_claim_bulk(s, fresh)
+        elif action == "received":
+            await notices.notify_confirmed_bulk(s, fresh)
+        else:
+            await notices.notify_rejected_bulk(s, fresh)
+    if action == "pay":
+        text = "\n".join([f"✅ Noted: you paid {who} {money(total)}. I've asked them to confirm.", f"💾 {money(logged)} added to your expenses.", *alerts])
+    elif action == "received":
+        text = f"✅ Confirmed: {who} paid you {money(total)}. All settled!"
+    else:
+        text = f"👍 Okay. I told {who} it's still unpaid ({money(total)})."
+    return Out(text, {"action": action, "person_id": person_id, "debt_ids": ids})

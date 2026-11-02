@@ -1,12 +1,23 @@
 """The payment buttons: the person who owes taps 'I paid', the person who is owed taps 'Received' or 'Not yet'."""
 from telegram import User as TgUser
 
+from app.bot import keyboards as kb
 from app.bot.base import BotBase
 
 ACTIONS = ("paid", "got", "notyet")
 
 
 class DueMixin(BotBase):
+    async def _settle_with(self, q, tg: TgUser, action: str, person_id: int) -> None:
+        """The per-person buttons of the dues screen: pay everything to one person, or confirm / refuse what they paid."""
+        ident = self.private(tg)
+        res = await self.call(ident, "settle_with", person_id=person_id, action=action)
+        if not res.ok:
+            await q.message.reply_text(res.message.replace("❌ ", "ℹ️ ", 1))
+            return
+        dues = await self.call(ident, "ui_view", view="dues")
+        await q.edit_message_text(f"{res.text}\n\n{dues.message}", reply_markup=kb.dues_keyboard(dues.data.get("dues")))
+
     async def _due(self, q, tg: TgUser, arg: str) -> None:
         raw_id, _, action = arg.partition(":")
         if not raw_id.isdigit() or action not in ACTIONS:
