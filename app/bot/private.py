@@ -1,22 +1,16 @@
-"""Private chat: /start, menu buttons, commands and free text."""
-from sqlalchemy import select
+"""Private chat: /start, menu buttons, commands and free text. Every answer comes from an MCP tool call."""
 from telegram import Update
-from telegram import User as TgUser
 from telegram.ext import ContextTypes
 
-from app.agent.guardrails import HELP, MAX_USER_MESSAGE_CHARS
 from app.bot import keyboards as kb
-from app.bot.base import BotBase, keep_typing
-from app.core import friends, notices, views
-from app.core.errors import UserError
-from app.core.formatting import friendly_expense
-from app.core.notifier import get_notifier
-from app.core.periods import month_key
-from app.db.models import Expense
-from app.db.session import session_scope
+from app.bot.base import MAX_USER_MESSAGE_CHARS, BotBase, keep_typing
+from app.util.periods import month_key
 
 
 class PrivateMixin(BotBase):
+    async def _help_text(self, tg) -> str:
+        return (await self.call(self.private(tg), "respond_to_user", kind="help")).message
+
     # ------------------------------------------------------------ /start (also handles invite and join links)
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         tg, msg = update.effective_user, update.effective_message
@@ -26,72 +20,48 @@ class PrivateMixin(BotBase):
                 return
         elif not await self._guard(update):
             return
-        uid = await self._uid(tg, started=True)
-        async with session_scope() as s:
-            await notices.deliver_pending(s, uid)  # anything that was waiting for them
+        # opening a session as someone who pressed Start also makes the server queue anything that was waiting for them
+        ident = self.private(tg)
         if param.startswith("join_") and param[5:].isdigit():
-            await self._join_from_start(msg, tg, int(param[5:]))
-        await msg.reply_text(HELP, reply_markup=kb.main_menu())
+            res = await self.call(ident, "join_group_via_start", group_id=int(param[5:]))
+            await msg.reply_text(res.message)
+        else:
+            await self.gateway.session_token(ident, force=True)
+        await msg.reply_text(await self._help_text(tg), reply_markup=kb.main_menu())
 
-    async def _accept_invite(self, tg: TgUser, msg, inviter_tg: str) -> bool:
-        """Someone opened a friend's invite link: connect them both (each side uses the other's Telegram name)."""
-        if not inviter_tg.isdigit() or not await self.allowed(int(inviter_tg)) or int(inviter_tg) == tg.id:
+    async def _accept_invite(self, tg, msg, inviter_tg: str) -> bool:
+        """Someone opened a friend's invite link: the server connects them both (each side uses the other's Telegram name)."""
+        if not inviter_tg.isdigit():
             await msg.reply_text("That invite link isn't valid.")
             return False
-        inviter_name = ""
-        try:
-            async with session_scope() as s:
-                inviter = await friends.upsert_user(s, int(inviter_tg))
-                me = await friends.upsert_user(s, tg.id, tg.full_name, tg.username, started=True)
-                inviter_name = friends.display(inviter)
-                for owner, other in ((inviter, me), (me, inviter)):
-                    if any(u.id == other.id for _, u in await friends.list_friends(s, owner.id)):
-                        continue
-                    nick = (friends.display(other) or "Friend")[:30]
-                    try:
-                        await friends.add_friend(s, owner.id, other.telegram_id, nick)
-                    except UserError:  # that nickname is taken in their list: make it unique
-                        await friends.add_friend(s, owner.id, other.telegram_id, f"{nick} {other.telegram_id % 1000}")
-        except UserError as e:
-            await msg.reply_text(f"❌ {e}")
-            return False
-        await get_notifier().send(int(inviter_tg), f"👥 {tg.full_name} joined your friends through your invite link. You can split bills with them now.\n(To rename them: 'add friend NewName {tg.id}')")
-        await msg.reply_text(f"🤝 You're now friends with {inviter_name or 'them'}. They can split bills with you, and you'll get a message when they do.")
-        return True
+        res = await self.gateway.platform("platform_accept_invite", {
+            "person": {"telegram_id": tg.id, "name": tg.full_name, "username": tg.username}, "inviter_telegram_id": int(inviter_tg),
+        })
+        await msg.reply_text(res.message.replace("❌ ", ""))
+        return res.ok
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
-            await update.effective_message.reply_text(HELP, reply_markup=kb.main_menu())
+            await update.effective_message.reply_text(await self._help_text(update.effective_user), reply_markup=kb.main_menu())
 
     # ------------------------------------------------------------ commands + menu (no LLM, instant)
-    async def _direct(self, tg: TgUser, message, action: str) -> None:
-        uid = await self._uid(tg, started=True)
-        async with session_scope() as s:
-            if action == "summary":
-                await message.reply_text(await views.summary_text(s, uid, "this_month"), reply_markup=kb.summary_keyboard("this_month"))
-            elif action == "recent":
-                await message.reply_text(await views.recent_text(s, uid, limit=10))
-            elif action == "budgets":
-                await message.reply_text(await views.budgets_text(s, uid))
-            elif action == "friends":
-                await message.reply_text(await views.friends_text(s, uid))
-            elif action == "dues":
-                await message.reply_text(await views.dues_text(s, uid))
-            elif action == "daily":
-                await message.reply_text(await views.daily_text(s, uid), reply_markup=kb.daily_keyboard(month_key()))
-            elif action == "trend":
-                await message.reply_text(await views.trend_text(s, uid, 6), reply_markup=kb.trend_keyboard(6))
-            elif action == "invite":
-                link = notices.start_link(f"inv_{tg.id}")
-                await message.reply_text(f"🔗 Send this link to a friend. When they open it, you become friends automatically:\n{link}" if link else "The bot link isn't ready yet. Try again in a moment.")
-            elif action == "undo":
-                last = (await s.execute(
-                    select(Expense).where(Expense.user_id == uid, Expense.voided_at.is_(None), Expense.source == "personal").order_by(Expense.id.desc()).limit(1)
-                )).scalar_one_or_none()
-                if last is None:
-                    await message.reply_text("Nothing to undo yet.")
-                else:
-                    await message.reply_text(f"Undo this?\n\n{friendly_expense(last)}", reply_markup=kb.undo_confirm_keyboard(last.id))
+    async def _direct(self, tg, message, action: str) -> None:
+        ident = self.private(tg)
+        if action == "summary":
+            res = await self.call(ident, "ui_view", view="summary", arg="this_month")
+            await message.reply_text(res.message, reply_markup=kb.summary_keyboard("this_month"))
+        elif action == "daily":
+            res = await self.call(ident, "ui_view", view="daily", arg=month_key())
+            await message.reply_text(res.message, reply_markup=kb.daily_keyboard(month_key()))
+        elif action == "trend":
+            res = await self.call(ident, "ui_view", view="trend", arg="6")
+            await message.reply_text(res.message, reply_markup=kb.trend_keyboard(6))
+        elif action == "undo":
+            res = await self.call(ident, "last_expense")
+            expense_id = res.data.get("expense_id")
+            await message.reply_text(res.message, reply_markup=kb.undo_confirm_keyboard(expense_id) if expense_id else None)
+        elif action in ("recent", "budgets", "friends", "dues", "invite"):
+            await message.reply_text((await self.call(ident, "ui_view", view=action)).message)
 
     async def on_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/summary /recent /budgets /friends /dues /daily /trend /invite /undo"""
@@ -117,5 +87,5 @@ class PrivateMixin(BotBase):
             await msg.reply_text("✂️ That message is too long for me. Please keep it short, e.g. \"spent 200 on lunch\".")
             return
         async with keep_typing(context.bot, msg.chat_id):
-            reply = await self._ask(update.effective_user, msg.text)
+            reply = await self._ask(update.effective_user, msg.chat, msg.text, bot=context.bot)
         await self._send(msg, reply)

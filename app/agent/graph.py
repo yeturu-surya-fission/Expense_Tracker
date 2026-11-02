@@ -6,14 +6,15 @@ LangGraph definition.
                |                         +--(all ok)----------> respond -> END
     agent --(no tool calls)--> END
 
-After the last tool finishes, `respond` builds the reply straight from the tool output (no second
-LLM round-trip = much faster). Only a tool *error* goes back to the LLM so it can retry.
+The agent never touches expense data. Every tool call is an HTTP request to the MCP server, made with a token for the
+person who is chatting. When the server answers `input_required` (a question for the human), the graph pauses with
+`interrupt()`; the human's answer is sent back on a fresh call of the SAME tool, so nothing was written while waiting.
 
-The tools node executes ONE tool call per superstep. That keeps every step checkpointed, so a
-human-in-the-loop `interrupt()` pauses only that call and a resume never repeats a finished write.
+After the last tool finishes, `respond` builds the reply straight from the tool output (no second LLM round-trip).
+Only a tool *error* goes back to the LLM so it can retry.
 
-Two chat contexts share this graph: a private chat (the user's own expenses, friends, splits) and a Telegram
-group chat (only the shared-group tools). The context arrives in the run config.
+The tools node executes ONE tool call per superstep. That keeps every step checkpointed, so a pause affects only that
+call and a resume never repeats a finished write (the server also de-duplicates by idempotency key).
 """
 import logging
 from typing import Annotated, TypedDict
@@ -25,18 +26,18 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.errors import GraphBubbleUp
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from langgraph.types import interrupt
 
-from app.agent.guardrails import SCOPE_MESSAGE
 from app.agent.prompts import GROUP_CHAT_CONTEXT, PRIVATE_CHAT_CONTEXT, SYSTEM_PROMPT
-from app.config import settings
-from app.core import budgets, friends, groups, markers
-from app.core.periods import now_local
-from app.db.session import session_scope
-from app.tools import GROUP_TOOLS, PRIVATE_TOOLS, TOOLS_BY_NAME
+from app.agent.toolsets import GROUP_TOOLS, PRIVATE_TOOLS
+from app.mcp_client.gateway import McpGateway
+from app.mcp_client.types import Identity, ToolResult
+from app.util.choices import is_cancel
+from app.util.periods import now_local
 
 log = logging.getLogger(__name__)
 HISTORY_MESSAGES = 40
-
+MAX_QUESTIONS_PER_CALL = 4  # a tool asks at most two; this only stops a misbehaving server from looping us
 
 
 class AgentState(TypedDict):
@@ -69,33 +70,40 @@ def _turn_tool_messages(messages: list[AnyMessage]) -> list[ToolMessage]:
     return out[::-1]
 
 
-def build_graph(llm: BaseChatModel, checkpointer: BaseCheckpointSaver | None = None):
-    llm_private = llm.bind_tools(PRIVATE_TOOLS)
-    llm_group = llm.bind_tools(GROUP_TOOLS)
-    allowed = {"private": {t.name for t in PRIVATE_TOOLS}, "group": {t.name for t in GROUP_TOOLS}}
+def identity_from(config: RunnableConfig) -> Identity:
+    c = config["configurable"]
+    return Identity(
+        telegram_id=c["telegram_id"], name=c.get("name"), username=c.get("username"), chat_type=c.get("chat_type", "private"),
+        group_chat_id=c.get("group_chat_id"), group_title=c.get("group_title"), started=bool(c.get("started")),
+    )
+
+
+def build_graph(llm: BaseChatModel, gateway: McpGateway, tool_defs: list[dict], checkpointer: BaseCheckpointSaver | None = None):
+    by_name = {t["name"]: t for t in tool_defs}
+    names = {"private": set(PRIVATE_TOOLS) & set(by_name), "group": set(GROUP_TOOLS) & set(by_name)}
+    llm_private = llm.bind_tools([by_name[n] for n in PRIVATE_TOOLS if n in by_name])
+    llm_group = llm.bind_tools([by_name[n] for n in GROUP_TOOLS if n in by_name])
+
+    async def server_text(ident: Identity, kind: str) -> str:
+        """Fixed wording (refusals, greeting) lives on the server too."""
+        return (await gateway.call(ident, "respond_to_user", {"kind": kind})).message
 
     async def agent_node(state: AgentState, config: RunnableConfig):
         cfg = config["configurable"]
-        user_id, in_group = cfg["user_id"], cfg.get("chat_type") == "group"
+        ident, in_group = identity_from(config), cfg.get("chat_type") == "group"
+        info = (await gateway.call(ident, "agent_context")).data
         categories, friend_names, chat_context = [], [], PRIVATE_CHAT_CONTEXT
-        async with session_scope() as s:
-            if in_group:
-                group = await groups.group_for_chat(s, cfg.get("group_chat_id"))
-                speaker = friends.display(await friends.get_user(s, user_id))
-                if group:
-                    people = ", ".join(friends.display(u) for u in await groups.members(s, group.id))
-                    chat_context = GROUP_CHAT_CONTEXT.format(speaker=speaker, group=group.name, members=people or "none yet")
-                else:
-                    chat_context = GROUP_CHAT_CONTEXT.format(speaker=speaker, group="(not created yet)", members="none")
-            else:
-                categories = await budgets.budget_categories(s, user_id)
-                friend_names = [f.nickname for f, _ in await friends.list_friends(s, user_id)]
+        if in_group:
+            people = ", ".join(info.get("members") or []) or "none yet"
+            chat_context = GROUP_CHAT_CONTEXT.format(speaker=info.get("speaker", "someone"), group=info.get("group") or "(not created yet)", members=people)
+        else:
+            categories, friend_names = info.get("categories", []), info.get("friends", [])
         now = now_local()
         system = SystemMessage(
             SYSTEM_PROMPT.format(
                 today=now.strftime("%A, %Y-%m-%d"),
-                tz=settings.timezone,
-                symbol=settings.currency_symbol,
+                tz=str(now.tzinfo),
+                symbol="₹",
                 categories=", ".join(categories) or "none yet",
                 friends=", ".join(friend_names) or "none yet",
                 chat_context=chat_context,
@@ -110,18 +118,41 @@ def build_graph(llm: BaseChatModel, checkpointer: BaseCheckpointSaver | None = N
             # Guardrail: the model must act through tools. Free text from it is never forwarded
             # (that is where coding / general-knowledge answers would leak out).
             log.info("guardrail: dropped free-text model reply")
-            resp = AIMessage(content=SCOPE_MESSAGE)
+            resp = AIMessage(content=await server_text(ident, "off_topic"))
         return {"messages": [resp]}
+
+    async def run_tool(call: dict, ident: Identity, config: RunnableConfig, idem_base: str) -> ToolResult:
+        """Call one tool; every question the server asks becomes a pause, and the answers go back on a fresh call."""
+        cfg, answers = config["configurable"], {}
+        for _ in range(MAX_QUESTIONS_PER_CALL + 1):
+            res = await gateway.call(
+                ident, call["name"], call["args"], answers=answers, idempotency_key=idem_base, member_count=cfg.get("member_count"),
+            )
+            if res.status != "input_required":
+                return res
+            req = res.input_requests[0]
+            reply = interrupt({
+                "type": "choice", "key": req["key"], "question": res.text or req["question"],
+                "options": req["options"],
+            })
+            answers[req["key"]] = "cancel" if is_cancel(reply) and reply not in {o["id"] for o in req["options"]} else reply
+        return ToolResult(status="error", error={"code": "too_many_questions", "message": "The server kept asking questions."})
 
     async def tools_node(state: AgentState, config: RunnableConfig):
         call = pending_tool_calls(state["messages"])[0]
         context = "group" if config["configurable"].get("chat_type") == "group" else "private"
-        tool = TOOLS_BY_NAME.get(call["name"])
-        if tool is None or call["name"] not in allowed[context]:
+        ident = identity_from(config)
+        if call["name"] not in names[context]:
             msg = ToolMessage(f"Tool {call['name']} is not available in a {context} chat.", tool_call_id=call["id"], name=call["name"], status="error")
         else:
+            thread = config["configurable"].get("thread_id", "")
+            idem = f"{thread}:{_last_ai(state['messages']).id}:{call['id']}"
             try:
-                msg = await tool.ainvoke({**call, "type": "tool_call"}, config)
+                res = await run_tool(call, ident, config, idem)
+                msg = ToolMessage(
+                    res.message, tool_call_id=call["id"], name=call["name"], artifact=res.data,
+                    status="error" if res.status == "error" else "success",
+                )
             except GraphBubbleUp:  # interrupt() - must propagate
                 raise
             except Exception as e:  # let the LLM see the error and recover
@@ -149,10 +180,14 @@ def build_graph(llm: BaseChatModel, checkpointer: BaseCheckpointSaver | None = N
                         lines.append(line)
                 elif lines and lines[-1].strip():  # keep single blank lines (layout)
                     lines.append("")
-        raw = "\n".join(lines).strip() or "Done."
-        found = markers.extract(raw, expenses_from="\n".join(str(m.content) for m in tool_msgs if m.name == "add_expenses"))
-        extras = {"txn_ids": found.txn_ids, "split_ids": found.split_ids, "start_ids": found.start_ids}
-        return {"messages": [AIMessage(content=found.text, additional_kwargs=extras)]}
+        data = [(m.name, m.artifact or {}) for m in tool_msgs if isinstance(m.artifact, dict)]
+        extras = {
+            "txn_ids": [i for n, d in data if n == "add_expenses" for i in d.get("expense_ids", [])],
+            "split_ids": [i for n, d in data if n != "cancel_split" for i in d.get("split_ids", [])],
+            "start_users": list({u["telegram_id"]: u for _, d in data for u in d.get("start_users", [])}.values()),
+            "group_id": next((d["group_id"] for _, d in data if d.get("group_id")), None),
+        }
+        return {"messages": [AIMessage(content="\n".join(lines).strip() or "Done.", additional_kwargs=extras)]}
 
     g = StateGraph(AgentState)
     g.add_node("agent", agent_node)

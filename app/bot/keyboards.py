@@ -1,6 +1,6 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
-from app.core.periods import month_key, month_label, shift_month
+from app.util.periods import month_key, month_label, shift_month
 
 # Persistent menu under the text box. Label -> action; handled WITHOUT the LLM (instant).
 MENU = {
@@ -51,9 +51,9 @@ def undo_confirm_keyboard(expense_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
-def settle_keyboard(group_id: int) -> InlineKeyboardMarkup:
+def settle_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Yes, settle up", callback_data=f"gsettle:{group_id}"),
+        InlineKeyboardButton("✅ Yes, settle up", callback_data="gsettle"),
         InlineKeyboardButton("✖ Not yet", callback_data="keep"),
     ]])
 

@@ -11,11 +11,6 @@ from app.bot.dues_flow import DueMixin
 from app.bot.group import GroupMixin
 from app.bot.private import PrivateMixin
 from app.bot.statement_flow import StatementMixin
-from app.core import expenses, friends, groups, notices, splits, views
-from app.core.errors import UserError
-from app.core.formatting import friendly_expense, money
-from app.core.periods import PeriodError
-from app.db.session import session_scope
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +20,7 @@ class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin):
         q = update.callback_query
         await q.answer()  # stops the button's loading spinner immediately
         tg, msg = q.from_user, q.message
-        if not await self.allowed(tg.id):
+        if not await self.allowed(self.ident_for(tg, msg.chat)):
             return
         kind, _, arg = q.data.partition(":")
 
@@ -35,21 +30,18 @@ class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin):
                 await q.answer("This question is for someone else.", show_alert=True)
                 return
             await q.edit_message_reply_markup(reply_markup=None)  # one-shot buttons
-            in_group = msg.chat.type != "private"
             async with keep_typing(context.bot, msg.chat_id):
-                reply = await self._ask(tg, option, from_button=True, group_chat_id=msg.chat_id if in_group else None)
+                reply = await self._ask(tg, msg.chat, option, bot=context.bot, from_button=True)
+            in_group = msg.chat.type != "private"
             await self._send(msg, reply, owner_telegram_id=tg.id if in_group else None)
             if in_group:
-                async with session_scope() as s:
-                    group = await groups.group_for_chat(s, msg.chat_id)
-                if group is not None:
-                    await self.announce_unreachable(msg, reply, group.id)
+                await self.announce_unreachable(msg, reply)
 
         elif kind == "due":
             await self._due(q, tg, arg)
 
         elif kind == "gsettle":
-            await self._settle_button(q, tg, int(arg))
+            await self._settle_button(q, tg, context.bot)
 
         elif kind == "undo":
             await self._undo_expenses(q, tg, [int(i) for i in arg.split(",") if i])
@@ -71,43 +63,31 @@ class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin):
 
     # ------------------------------------------------------------ undo buttons
     async def _undo_expenses(self, q, tg, ids: list[int]) -> None:
-        uid, lines = await self._uid(tg, started=True), []
-        try:
-            async with session_scope() as s:
-                for i in ids:
-                    lines.append(f"↩️ Undone: {friendly_expense(await expenses.void_expense(s, uid, i))}")
-        except UserError:
+        res = await self.call(self.private(tg), "undo_expenses", expense_ids=ids)
+        if not res.ok:
             await q.edit_message_reply_markup(reply_markup=None)
             await q.message.reply_text("That was already undone.")
             return
-        await q.edit_message_text("\n".join(lines))
+        await q.edit_message_text(res.text)
 
     async def _undo_split(self, q, tg, split_id: int) -> None:
-        uid = await self._uid(tg, started=True)
-        try:
-            async with session_scope() as s:
-                me = await friends.get_user(s, uid)
-                shared, cancelled = await splits.cancel_split(s, uid, split_id)
-                await notices.notify_cancelled(s, cancelled, me)
-        except UserError as e:
+        res = await self.call(self.ident_for(tg, q.message.chat), "cancel_split", split_id=split_id)
+        if not res.ok:
             await q.edit_message_reply_markup(reply_markup=None)
-            await q.message.reply_text(f"ℹ️ {e}")
+            await q.message.reply_text(res.message.replace("❌ ", "ℹ️ ", 1))
             return
-        await q.edit_message_text(f"↩️ Cancelled split #{shared.id} ({shared.description}, {money(shared.amount)}). Everyone was told.")
+        await q.edit_message_text(res.text)
 
     # ------------------------------------------------------------ summary / daily / trend screens that edit in place
     async def _view(self, q, tg, kind: str, arg: str) -> None:
-        uid = await self._uid(tg, started=True)
+        ident = self.private(tg)
+        view = {"sum": "summary", "day": "daily", "trend": "trend"}[kind]
+        res = await self.call(ident, "ui_view", view=view, arg=arg)
+        if not res.ok:
+            await q.message.reply_text(res.message)
+            return
+        markup = kb.summary_keyboard(arg) if kind == "sum" else kb.daily_keyboard(arg) if kind == "day" else kb.trend_keyboard(int(arg))
         try:
-            async with session_scope() as s:
-                if kind == "sum":
-                    text, markup = await views.summary_text(s, uid, arg), kb.summary_keyboard(arg)
-                elif kind == "day":
-                    text, markup = await views.daily_text(s, uid, arg), kb.daily_keyboard(arg)
-                else:
-                    text, markup = await views.trend_text(s, uid, int(arg)), kb.trend_keyboard(int(arg))
-            await q.edit_message_text(text, reply_markup=markup)
+            await q.edit_message_text(res.text, reply_markup=markup)
         except BadRequest:  # same content tapped twice
             pass
-        except PeriodError as e:
-            await q.message.reply_text(f"❌ {e}")

@@ -1,0 +1,20 @@
+# the Telegram bot (app/): Telegram, the LLM agent, and the MCP client. No database driver for expenses.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+pydantic-settings>=2.3
+python-telegram-bot>=21.5
+mcp>=2.3,<3
+tzdata
+
+# agent brain
+langchain-core>=0.3
+langgraph>=0.4
+langgraph-checkpoint-postgres>=2.0
+psycopg[binary,pool]>=3.2
+
+# LLM providers (any one is enough at runtime; the key decides which is used)
+langchain-google-genai>=2.0
+langchain-openai>=0.2
+langchain-anthropic>=0.3
+langchain-groq>=0.2

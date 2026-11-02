@@ -1,19 +1,20 @@
-"""Shared helpers for every handler: who is allowed, who is this person in our database, asking the agent."""
+"""Shared helpers for every handler: who is this person, may they use the system, asking the agent, calling MCP tools."""
 import asyncio
 import logging
 from contextlib import asynccontextmanager
 
 from telegram import User as TgUser
 from telegram.constants import ChatAction
+from telegram.error import TelegramError
 
 from app.agent.runner import AgentReply, AgentRunner, is_rate_limit
 from app.bot import keyboards as kb
-from app.config import settings
-from app.core import friends, groups
-from app.db.session import session_scope
+from app.mcp_client.gateway import McpGateway
+from app.mcp_client.types import Identity, McpError, NoGroup, NotAllowed, ToolResult
 
 log = logging.getLogger(__name__)
 REPLY_TIMEOUT = 60  # hard cap on one message, whatever the LLM does
+MAX_USER_MESSAGE_CHARS = 1000
 
 
 @asynccontextmanager
@@ -35,65 +36,78 @@ async def keep_typing(bot, chat_id: int):
 
 
 class BotBase:
-    def __init__(self, runner: AgentRunner, llm):
+    def __init__(self, runner: AgentRunner, llm, gateway: McpGateway):
         self.runner = runner
         self.llm = llm  # used by the statement importer
-        self._users: dict[int, tuple[int, bool]] = {}  # telegram id -> (db id, has started the bot)
+        self.gateway = gateway
 
-    # ---- who may use the bot
+    # ---- who is this, and where
     @staticmethod
-    def can_add_bot(telegram_id: int) -> bool:
-        """Only the owner side (the allow-list; everyone if it is empty) may add the bot to a group. Others make it leave."""
-        return not settings.allowed_ids or telegram_id in settings.allowed_ids
+    def private(tg: TgUser) -> Identity:
+        """Writing to the bot in private means the bot can write back (the person pressed Start)."""
+        return Identity(telegram_id=tg.id, name=tg.full_name, username=tg.username, started=True)
 
     @staticmethod
-    async def allowed(telegram_id: int) -> bool:
-        """
-        May this person use the bot in a private chat? The allow-list, friends of a listed person, and anyone who is
-        in an expense group (everyone in a group the owner added the bot to can use it).
-        """
-        if not settings.allowed_ids or telegram_id in settings.allowed_ids:
+    def in_group(tg: TgUser, chat) -> Identity:
+        return Identity(telegram_id=tg.id, name=tg.full_name, username=tg.username, chat_type="group",
+                        group_chat_id=chat.id, group_title=chat.title)
+
+    @classmethod
+    def ident_for(cls, tg: TgUser, chat) -> Identity:
+        return cls.private(tg) if chat.type == "private" else cls.in_group(tg, chat)
+
+    # ---- may they use it? (the server decides; a refused session is the answer)
+    async def allowed(self, ident: Identity) -> bool:
+        try:
+            await self.gateway.session_token(ident)
             return True
-        async with session_scope() as s:
-            if await friends.is_friend_of_anyone(s, telegram_id):
-                return True
-            user = await friends.upsert_user(s, telegram_id)
-            return await groups.is_member_anywhere(s, user.id)
+        except (NotAllowed, NoGroup):
+            return False
 
     async def _guard(self, update) -> bool:
-        if await self.allowed(update.effective_user.id):
+        tg = update.effective_user
+        if await self.allowed(self.private(tg)):
             return True
         target = update.effective_message or (update.callback_query and update.callback_query.message)
         if target:
             await target.reply_text("Sorry, this is a private bot. 🔒 Ask a friend who uses it to add you.")
         return False
 
-    # ---- who is this person in our database
-    async def _uid(self, tg: TgUser, started: bool = False) -> int:
-        hit = self._users.get(tg.id)
-        if hit and (hit[1] or not started):
-            return hit[0]
-        async with session_scope() as s:
-            user = await friends.upsert_user(s, tg.id, tg.full_name, tg.username, started=started)
-            self._users[tg.id] = (user.id, user.started_at is not None)
-        return user.id
+    # ---- calling the server
+    async def call(self, ident: Identity, tool: str, **args) -> ToolResult:
+        return await self.gateway.call(ident, tool, args)
+
+    @staticmethod
+    def shown(res: ToolResult) -> str:
+        """The text of a result for a human; a refusal ('❌ ...') of a button action reads as information."""
+        return res.message
 
     # ---- asking the agent
-    async def _ask(
-        self, tg: TgUser, text: str, *, from_button: bool = False, group_chat_id: int | None = None
-    ) -> AgentReply:
-        in_group = group_chat_id is not None
-        uid = await self._uid(tg, started=not in_group)
-        thread = f"tg-g{group_chat_id}-{tg.id}" if in_group else f"tg-{tg.id}"
-        context = {"chat_type": "group", "group_chat_id": group_chat_id} if in_group else {"chat_type": "private"}
+    @staticmethod
+    async def member_count(bot, chat) -> int | None:
+        if chat.type == "private":
+            return None
+        try:
+            return await bot.get_chat_member_count(chat.id)
+        except TelegramError:
+            return None
+
+    async def _ask(self, tg: TgUser, chat, text: str, *, bot=None, from_button: bool = False) -> AgentReply:
+        ident = self.ident_for(tg, chat)
+        in_group = ident.chat_type == "group"
+        thread = f"tg-g{chat.id}-{tg.id}" if in_group else f"tg-{tg.id}"
+        count = await self.member_count(bot, chat) if (in_group and bot is not None) else None
         try:
             return await asyncio.wait_for(
-                self.runner.chat(user_id=uid, thread_id=thread, text=text, from_button=from_button, context=context),
+                self.runner.chat(identity=ident, thread_id=thread, text=text, from_button=from_button, member_count=count),
                 timeout=REPLY_TIMEOUT,
             )
         except asyncio.TimeoutError:
             log.error("agent timed out for telegram user %s", tg.id)
             return AgentReply("⏱️ The AI took too long to answer. Please send it again.")
+        except McpError:
+            log.exception("expense service unavailable for telegram user %s", tg.id)
+            return AgentReply("🔌 I can't reach the expense service right now. Please try again in a moment.")
         except Exception as e:
             if is_rate_limit(e):
                 log.warning("LLM rate limit hit for telegram user %s", tg.id)

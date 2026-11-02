@@ -13,7 +13,8 @@ from dataclasses import dataclass, field
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
-from app.core.choices import is_cancel, match_option
+from app.mcp_client.types import Identity
+from app.util.choices import is_cancel, match_option
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +25,8 @@ class AgentReply:
     choices: list[dict] = field(default_factory=list)  # non-empty => ask the user to pick one: [{"id","label"}]
     txn_ids: list[int] = field(default_factory=list)  # expenses just recorded (Undo button)
     split_ids: list[int] = field(default_factory=list)  # splits just created (Cancel-split button)
-    start_ids: list[int] = field(default_factory=list)  # telegram ids of people who still need to press Start
+    start_users: list[dict] = field(default_factory=list)  # [{telegram_id, name}] people who still need to press Start
+    group_id: int | None = None  # the expense group the reply is about (for the 'press Start' link)
 
 
 def is_rate_limit(exc: BaseException) -> bool:
@@ -45,10 +47,14 @@ class AgentRunner:
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)  # single-process guard
 
     async def chat(
-        self, *, user_id: int, thread_id: str, text: str, from_button: bool = False, context: dict | None = None
+        self, *, identity: Identity, thread_id: str, text: str, from_button: bool = False, member_count: int | None = None
     ) -> AgentReply:
-        """`context` = {"chat_type": "private" | "group", "group_chat_id": int | None}."""
-        configurable = {"thread_id": thread_id, "user_id": user_id, "chat_type": "private", **(context or {})}
+        """`identity` says who is talking and in which chat; the graph turns it into MCP session tokens."""
+        configurable = {
+            "thread_id": thread_id, "telegram_id": identity.telegram_id, "name": identity.name, "username": identity.username,
+            "chat_type": identity.chat_type, "group_chat_id": identity.group_chat_id, "group_title": identity.group_title,
+            "started": identity.started, "member_count": member_count,
+        }
         config = {"configurable": configurable, "recursion_limit": 40}
         async with self._locks[thread_id]:
             pending = await self._pending_interrupt(config)
@@ -77,7 +83,7 @@ class AgentRunner:
         text = (message_text(last_ai) if last_ai else "") or "Done."
         extra = last_ai.additional_kwargs if last_ai else {}
         return AgentReply(
-            text, txn_ids=extra.get("txn_ids", []), split_ids=extra.get("split_ids", []), start_ids=extra.get("start_ids", [])
+            text, txn_ids=extra.get("txn_ids", []), split_ids=extra.get("split_ids", []), start_users=extra.get("start_users", []), group_id=extra.get("group_id")
         )
 
     async def _pending_interrupt(self, config) -> dict | None:

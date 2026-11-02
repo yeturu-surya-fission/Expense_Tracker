@@ -14,10 +14,12 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from app.core.periods import now_local
-from app.core.statements import CATEGORIES, StatementError
 
 log = logging.getLogger(__name__)
+
+
+class StatementError(Exception):
+    """The model could not read part of the statement reliably."""
 
 CHUNK_CHARS = 4500
 CONCURRENCY = 2  # free-tier LLM keys allow only a few requests per minute
@@ -71,9 +73,12 @@ def split_chunks(pages: list[str], limit: int = CHUNK_CHARS) -> list[str]:
     return chunks
 
 
-async def parse_pages(llm: BaseChatModel, pages: list[str], user_categories: list[str] | None = None) -> list[dict]:
-    categories = list(dict.fromkeys([*CATEGORIES, *(user_categories or [])]))
-    system = SystemMessage(PROMPT.format(today=now_local().strftime("%Y-%m-%d"), categories=", ".join(categories)))
+async def parse_pages(
+    llm: BaseChatModel, pages: list[str], *, categories: list[str], today: str, user_categories: list[str] | None = None,
+) -> list[dict]:
+    """`categories` and `today` come from the server (statement_read_pdf), so the allowed list lives in one place."""
+    categories = list(dict.fromkeys([*categories, *(user_categories or [])]))
+    system = SystemMessage(PROMPT.format(today=today, categories=", ".join(categories)))
     structured = llm.with_structured_output(StatementChunk)
     sem = asyncio.Semaphore(CONCURRENCY)
 

@@ -1,0 +1,12 @@
+# the MCP server (mcp_server/): tools, domain, database, auth. No Telegram, no LLM.
+mcp>=2.3,<3
+uvicorn[standard]>=0.30
+sqlalchemy[asyncio]>=2.0.30
+asyncpg>=0.29
+alembic>=1.13
+pydantic>=2.7
+pydantic-settings>=2.3
+pyjwt>=2.9
+cryptography>=43
+pypdf>=5.0
+tzdata

@@ -1,3 +1,4 @@
+"""Settings of the Telegram bot. It holds the Telegram token, the LLM key, and the credentials to reach the MCP server: nothing else."""
 from functools import lru_cache
 from typing import Literal
 
@@ -13,7 +14,6 @@ class Settings(BaseSettings):
     telegram_mode: Literal["polling", "webhook"] = "polling"
     public_url: str = ""
     telegram_webhook_secret: str = ""
-    allowed_telegram_ids: str = ""
     bot_username: str = ""  # filled in at startup from Telegram
 
     # llm
@@ -26,16 +26,19 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     groq_api_key: str = ""
 
-    # database (a NEW database: the old cash/bank schema is not reused)
-    database_url: str = "postgresql+asyncpg://expense:expense@localhost:5432/expense_tracker"
+    # the MCP server: the ONLY way this process reaches expense data
+    mcp_server_url: str = "http://localhost:8001/mcp"
+    mcp_auth_url: str = ""  # base URL of the token endpoints; defaults to the MCP URL without its /mcp path
+    mcp_bot_client_id: str = "telegram-bot"
+    mcp_bot_client_secret: str = ""
+    mcp_timeout_seconds: float = 30.0
 
-    # behaviour
-    currency_symbol: str = "₹"
-    timezone: str = "Asia/Kolkata"
-    budget_alert_thresholds: str = "50,80,100"
-    reminder_every_hours: int = 48  # how often an unpaid share is re-sent to the person who owes it
-    ask_group_min_people: int = 4  # a split with this many people asks "one-off or create a group?"
+    # the bot's own database: only the LangGraph conversation state (chat history + paused questions)
+    bot_database_url: str = "postgresql://expense:expense@localhost:5432/expense_bot"
+
+    timezone: str = "Asia/Kolkata"  # only for the month buttons and the date in the prompt; the server does the real maths
     log_level: str = "INFO"
+    outbox_poll_seconds: float = 1.0
 
     @field_validator("*", mode="before")
     @classmethod
@@ -46,17 +49,16 @@ class Settings(BaseSettings):
         return v
 
     @property
-    def allowed_ids(self) -> set[int]:
-        return {int(x) for x in self.allowed_telegram_ids.replace(" ", "").split(",") if x}
-
-    @property
-    def alert_thresholds(self) -> list[int]:
-        return sorted({int(x) for x in self.budget_alert_thresholds.split(",") if x.strip()})
+    def auth_base_url(self) -> str:
+        if self.mcp_auth_url:
+            return self.mcp_auth_url.rstrip("/")
+        url = self.mcp_server_url.rstrip("/")
+        return url[: -len("/mcp")] if url.endswith("/mcp") else url
 
     @property
     def checkpointer_url(self) -> str:
         """psycopg-style DSN for the LangGraph Postgres checkpointer."""
-        return self.database_url.replace("postgresql+asyncpg://", "postgresql://")
+        return self.bot_database_url.replace("postgresql+asyncpg://", "postgresql://")
 
 
 @lru_cache

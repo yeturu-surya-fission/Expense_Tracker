@@ -80,58 +80,89 @@ adds the bot to some other group, it leaves. Group members cannot add the bot to
 
 ## Architecture
 
+Two services that only talk over HTTP. The **MCP server** owns the tools, the logic, the database and the authentication; the **Telegram bot**
+owns Telegram and the AI, and can reach expense data **only** through MCP requests carrying a token the server issued.
+
 ```mermaid
 flowchart LR
-    U["👤 Telegram<br/>private chat or group"] <--> BOT["Bot layer<br/>handlers · buttons"]
-    BOT -->|"free text"| AG["LangGraph agent<br/>agent → tools → respond"]
-    BOT -->|"menu buttons, /commands<br/>(no LLM)"| CORE
-    BOT -->|"PDF"| ST["Statement import"] --> CORE
-    AG --> TOOLS["Tools"] --> CORE["Core<br/>expenses · budgets · splits<br/>groups · debts · reports"]
-    AG --> LLM["☁️ Gemini / OpenAI /<br/>Anthropic / Groq"]
-    CORE -->|"notify friends"| NOTI["Notifier → Telegram"]
-    CORE --> DB[("PostgreSQL")]
-    AG --> DB
+    U["👤 Telegram<br/>private chat or group"] <--> BOT
+    subgraph BOTSVC["Telegram bot (app/)"]
+        BOT["Handlers · buttons"] -->|"free text"| AG["LangGraph agent<br/>agent → tools → respond"]
+        AG --> LLM["☁️ Gemini / OpenAI /<br/>Anthropic / Groq"]
+        BOT -->|"buttons, /commands, PDF"| CLI
+        AG --> CLI["MCP client<br/>tokens + HTTP"]
+        OUT["Outbox deliverer"]
+    end
+    subgraph MCPSVC["MCP server (mcp_server/)"]
+        AUTH["JWT auth"] --> TOOLS["Tools"] --> DOM["Domain<br/>expenses · budgets · splits<br/>groups · debts · reports"]
+        DOM --> OBX["Outbox + reminders"]
+    end
+    CLI ==>|"HTTP + Bearer token on every request"| AUTH
+    OUT ==> TOOLS
+    OUT --> U
+    DOM --> DB1[("Postgres<br/>expense data")]
+    AG --> DB2[("Postgres<br/>agent memory")]
 ```
 
 | Folder | Role |
 |---|---|
-| `app/core/` | **All the logic, no LLM, no Telegram.** `expenses`, `budgets`, `reports`/`views`, `friends`, `splits` (shares to the paisa), `groups` (settle-up), `debts` (pay / confirm lifecycle), `notices` (every message to other people), `statements` |
-| `app/tools/` | What the LLM may call. Private chat and group chat get different tool sets |
-| `app/agent/` | LangGraph graph, runner (pause/resume), prompt, scope guardrails, LLM factory, statement parser |
-| `app/bot/` | Telegram: private chat, group chat, payment buttons, statement upload, reminders, notifier |
-| `app/db/` | SQLAlchemy models and sessions |
+| `mcp_server/domain/` | **All the logic, no LLM, no Telegram.** `expenses`, `budgets`, `reports`/`views`, `friends`, `splits` (shares to the paisa), `groups` (settle-up), `debts` (pay / confirm lifecycle), `notices` + `outbox` (every message to other people), `statements` |
+| `mcp_server/tools/` | The MCP tools and the gate every call passes (scope, chat context, rate limit, idempotency, audit). Private and group chats see different tools |
+| `mcp_server/auth/` | RS256 JWT tokens, JWKS, `/auth/token`, `/auth/session`, `/auth/revoke` |
+| `mcp_server/db/`, `migrations/` | SQLAlchemy models and Alembic migrations |
+| `app/mcp_client/` | The bot's only way to the data: token manager + MCP calls |
+| `app/agent/` | LangGraph graph, runner (pause/resume), prompt, LLM factory, statement parser |
+| `app/bot/` | Telegram: private chat, group chat, payment buttons, statement upload, outbox delivery |
 
 ### How a message flows
-`agent` asks the LLM which tools to call → `tools` runs them **one per step** → `respond` builds the reply from the tool output
-(no second LLM call). The LLM never writes text to the user; anything off-topic gets a fixed refusal. If something is missing
-(*how to split?*, *one-off or group?*, *settle now?*) a tool pauses the graph with `interrupt()` and the bot shows buttons;
-the pause is saved in Postgres so it survives restarts.
+`agent` asks the LLM which tools to call → `tools` runs them **one per step**, each as an MCP request made with a token for the person who is
+chatting → `respond` builds the reply from the tool output (no second LLM call). The LLM never writes text to the user; anything off-topic gets
+a fixed refusal. If something is missing (*how to split?*, *one-off or group?*, *settle now?*) the server answers `input_required` **before
+writing anything**; the bot shows buttons, pauses (saved in Postgres, so it survives restarts), and calls the same tool again with the answer.
+
+### Security in one paragraph
+Every MCP request is authenticated and authorized: RS256 JWT bound to this server, 10-minute service tokens and 30-minute per-person session
+tokens, revocation, scope and chat-context checks, rate limiting and an audit log. Tools take no identity argument (the person comes from
+the token), writes carry idempotency keys, and the architecture is enforced by a test (the bot may not import the server, SQLAlchemy or
+a database driver).
 
 ### Data
 `users`, `friends` (nicknames are private to each owner), `expenses` (never deleted, undo = `voided_at`), `budgets`, `budget_alerts`,
-`groups`, `group_members` (with `left_at`), `shared_expenses` + `shares` (who owes how much), `debts` (pending → claimed → settled), `statement_imports`.
+`groups`, `group_members` (with `left_at`), `shared_expenses` + `shares` (who owes how much), `debts` (pending → claimed → settled),
+`statement_imports`, plus `outbox`, `audit_log`, `revoked_tokens`, `idempotency`. The bot's own database holds only LangGraph's checkpoints.
 
 ## Run
 
 1. Telegram: @BotFather → `/newbot` → copy the token (the **whole** token, `123456789:AAE...`). Your id: @userinfobot.
-2. `cp .env.example .env` and fill `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`, `ALLOWED_TELEGRAM_IDS`.
-3. **Docker (recommended):** `docker compose up --build`. This uses a **new database** (`expense_tracker`, volume `pgdata_expense`);
-   the earlier cash/bank data in the old `pgdata` volume is untouched (delete it with `docker volume rm` when you no longer need it).
+2. `cp .env.example .env` and fill `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`, `ALLOWED_TELEGRAM_IDS`, and `MCP_BOT_CLIENT_SECRET`
+   (a long random string both services share: `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
+3. **Docker (recommended):** `docker compose up --build` starts four containers: `mcp` (:8001), `bot` (:8000) and a Postgres for each.
+   The database is **new** (`expense_mcp`, volume `pgdata_mcp`; the bot's `expense_bot`, volume `pgdata_bot`); the data of the earlier
+   versions (volumes `pgdata`, `pgdata_expense`) is untouched.
 
-**Local:** Python 3.12, a Postgres, then `pip install -r requirements.txt` and `python run.py` (not plain uvicorn on Windows: see `run.py`).
+**Local (no Docker):** Python 3.12, two Postgres databases, `pip install -r requirements.txt`, then in two terminals
+`python -m mcp_server` and `python run.py` (not plain uvicorn on Windows: see `run.py`). Set `MCP_DATABASE_URL`, `BOT_DATABASE_URL`
+and `MCP_SERVER_URL` in `.env`.
 
-**Production:** `TELEGRAM_MODE=webhook`, `PUBLIC_URL=https://your.domain`, a strong `TELEGRAM_WEBHOOK_SECRET`.
+**Production:** `TELEGRAM_MODE=webhook`, `PUBLIC_URL=https://your.domain`, a strong `TELEGRAM_WEBHOOK_SECRET`; for the server
+`MCP_ENV=production` with `MCP_JWT_PRIVATE_KEY` (`python -m mcp_server.auth.genkey`). Details: [docs/MCP.md](docs/MCP.md).
 
-`ALLOWED_TELEGRAM_IDS` limits who can start using the bot; anyone you add as a friend (or who opens your invite link) can use it too.
+`ALLOWED_TELEGRAM_IDS` (enforced by the MCP server) limits who can start using the bot; anyone you add as a friend (or who opens your invite
+link) can use it too.
+
+**Tests:** `pip install -r requirements-dev.txt`, point `TEST_MCP_DATABASE_URL` (asyncpg URL) and `TEST_BOT_DATABASE_URL` (psycopg URL) at
+scratch databases, then `pytest`. They run the real server in-process and talk to it only through MCP, like the bot does.
 
 ## Limits
 - Friends must press Start before they can be messaged.
 - A tool call can't depend on another tool's result in the same message (the AI picks all tools up front).
 - Free LLM tiers are rate limited per minute; the bot says so instead of hanging.
-- Locks are per process: run a single instance. No migration tool yet (tables are created at startup).
+- Reminders run inside the MCP server: run a single instance of it (a second one would send them twice).
+- Outside AI apps need a service credential from the operator for now; "Sign in with Telegram" (OAuth) is the next step, see [docs/MCP.md](docs/MCP.md#8-not-done-yet-sign-in-for-people-outside-telegram).
 - The `.pptx` files in `docs/` still describe the earlier cash/bank version.
 
 ## More documentation
-- 🏗️ [Architecture](docs/ARCHITECTURE.md): system overview, layers, chat contexts, agent graph, data model, deployment, safety
+- 🏗️ [Architecture](docs/ARCHITECTURE.md): the two services, tokens, chat contexts, agent graph, outbox, data model, deployment, safety
+- 🔌 [MCP server](docs/MCP.md): endpoints, tokens, the result format, asking the human, tools, running it
 - 🔀 [Flows](docs/FLOWS.md): routing, expenses, splitting, the payment lifecycle, party netting, group setup and settle-up, statements, budgets
 - 🧠 [State graph](docs/STATE_GRAPH.md): how the agent loops (agent → tools → respond), with real traces and every possible path
