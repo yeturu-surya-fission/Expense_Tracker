@@ -20,6 +20,9 @@ from app.mcp_client.types import McpError
 
 logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # its URLs contain the bot token
+logging.getLogger("httpx2").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpcore2").setLevel(logging.WARNING)
 log = logging.getLogger("bot")
 
 
