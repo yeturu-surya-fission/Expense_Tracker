@@ -1,7 +1,11 @@
 # Flows
 
 Step-by-step behaviour of every important path. For the static structure see [ARCHITECTURE.md](ARCHITECTURE.md); for how the AI agent
-loops see [STATE_GRAPH.md](STATE_GRAPH.md).
+loops see [STATE_GRAPH.md](STATE_GRAPH.md); for tokens, tools and the question protocol see [MCP.md](MCP.md).
+
+**Two services.** In every diagram below, "**MCP server**" is the separate service that owns the tools, the logic and the expense database;
+"**Bot**" is the Telegram service. The bot never touches expense data itself: each arrow from the bot to the MCP server is an HTTP request
+carrying a token for the person who is chatting.
 
 Contents: [1. Message routing](#1-message-routing) · [2. Recording an expense](#2-recording-an-expense) ·
 [3. Splitting a bill with friends](#3-splitting-a-bill-with-friends) · [4. The payment lifecycle](#4-the-payment-lifecycle-i-paid--received) ·
@@ -18,10 +22,10 @@ Everything you send is routed first. Menu buttons and commands never touch the L
 flowchart TD
     IN(["Telegram update"]) --> WHERE{"where?"}
 
-    WHERE -->|"private chat"| PALLOW{"allowed?<br/>allow-list, a friend of a listed person,<br/>or a member of a group"}
+    WHERE -->|"private chat"| PALLOW{"allowed? (the MCP server decides when<br/>the bot asks for a session: allow-list, a friend<br/>of a listed person, or a member of a group)"}
     PALLOW -->|no| DENY["🔒 private bot"]
     PALLOW -->|yes| PKIND{"what is it?"}
-    PKIND -->|"menu button / /command"| DIRECT["answer from the database<br/>(no LLM, instant)"]
+    PKIND -->|"menu button / /command"| DIRECT["ask the MCP server directly<br/>(no LLM, instant)"]
     PKIND -->|"PDF file"| PDF["statement import (flow 8)"]
     PKIND -->|"text"| LEN{"over 1000 chars?"}
     LEN -->|yes| TOOLONG["✂️ too long"]
@@ -55,17 +59,19 @@ sequenceDiagram
     actor U as You
     participant B as Bot
     participant G as LangGraph + LLM
-    participant C as core
+    participant M as MCP server
     participant D as Postgres
 
     U->>B: "spent 300 on ice cream"
     B->>G: run the graph
+    G->>M: agent_context (budget categories, friends)
     G->>G: agent: LLM picks add_expenses(300, food)
-    G->>C: tools: add_expense
-    C->>D: insert the expense
-    C->>C: budget check (50 / 80 / 100%)
-    C-->>G: "Spent ₹300 on ice cream" + any alert
-    G-->>B: respond builds the reply (+ Undo button)
+    G->>M: tools: MCP request add_expenses (Bearer token of this person)
+    M->>M: verify token, scope, chat context, idempotency key
+    M->>D: insert the expense
+    M->>M: budget check (50 / 80 / 100%)
+    M-->>G: {status: ok, text: "Spent ₹300 on ice cream" + alert, data: {expense_ids}}
+    G-->>B: respond builds the reply (+ Undo button from data.expense_ids)
     B-->>U: reply
 ```
 
@@ -79,24 +85,34 @@ sequenceDiagram
     actor U as You
     participant B as Bot
     participant G as Graph
-    participant C as core
+    participant M as MCP server
+    participant O as Bot delivery loop
     actor F as Surya (private chat)
 
     U->>B: "dining 3k, split with Surya"
     B->>G: run
-    G->>G: LLM: split_expense(3000, with Surya) — no split method said
-    Note over G: the tool pauses: interrupt() saved in Postgres
+    G->>M: split_expense(3000, with Surya) — no split method said
+    M-->>G: {status: input_required, question, options}   (nothing was written)
+    Note over G: interrupt(): the graph pauses, state saved in the bot's Postgres
     G-->>B: question
     B-->>U: "How should I split ₹3,000?"  [Equally] [I'll tell the amounts] [Cancel]
     U->>B: taps Equally
     B->>G: resume("equal")
-    G->>C: create the split: ₹1,500 each, you included
-    C->>C: your ₹1,500 goes into your expenses now
-    C->>C: a debt: Surya owes you ₹1,500
-    C-->>F: "Kiran paid for dining. Your share: ₹1,500."  [✅ I paid]
+    G->>M: the SAME split_expense again, now with answers={split_mode: equal}
+    M->>M: create the split: ₹1,500 each, you included
+    M->>M: your ₹1,500 goes into your expenses now
+    M->>M: a debt: Surya owes you ₹1,500, and an outbox message for Surya (same transaction)
+    M-->>G: {status: ok, text, data: {split_ids}}
     G-->>B: reply + Cancel-split button
     B-->>U: "Surya owes ₹1,500 ✓ notified"
+    O->>M: platform_outbox_claim
+    O-->>F: "Kiran paid for dining. Your share: ₹1,500."  [✅ I paid]
+    O->>M: acknowledge (message id)
 ```
+
+The key point: **a question is a result, not a half-finished action.** The server asks *before* it writes anything, so while the human is thinking
+nothing exists; their answer arrives as a second call of the same tool, and the write happens exactly once (repeat calls carry the same
+idempotency key and return the first result).
 
 Other questions the bot may ask: *one-off or create a group?* (4 or more people), *equally, always equally in this group, or amounts?* (group
 expenses), *settle up now?* (before settling a group). A typed answer works too ("equally"), and an unrelated reply simply cancels the
@@ -187,22 +203,27 @@ sequenceDiagram
     actor A as Kiran (in the group)
     actor S as Surya (in the group)
     participant B as Bot
-    participant C as core
+    participant M as MCP server
     actor K as Komal (has not pressed Start)
 
     A->>B: "@bot I paid 60 for coffee"
-    B->>C: add_group_expense, shared by all members
+    B->>M: add_group_expense (token says: this person, in THIS group chat)
     B-->>A: "K Gopal paid ₹60 · Split equally among 3 (₹20 each)"
     S->>B: "@bot I paid 100 for tiffins, I ate dosa 40, Kiran and Komal idly 30 each"
     B-->>S: "Split: Surya ₹40, Kiran ₹30, Komal ₹30"
     A->>B: "@bot split the bill"   (or /settle)
+    B->>M: settle_group
+    M-->>B: input_required: "Settle up Goa trip now?"
     B-->>A: "Settle up Goa trip now?  [Yes, settle up]"
     A->>B: taps Yes
-    B->>C: settle: net per person, fewest payments
+    B->>M: settle_group again, answers={settle: yes}
+    M->>M: net per person, fewest payments; queue every private bill
+    M-->>B: summary text + data.start_users = [Komal]
     B-->>A: group message: who pays whom, then each person's maths
-    C-->>S: private bill with the items + [I paid]  (if Surya owes)
+    B-->>S: (delivery loop) private bill with the items + [I paid]  (if Surya owes)
     B-->>K: tags Komal in the group: "press Start" [Start the bot]
     K->>B: presses Start
+    B->>M: opens Komal's session as "started": the server queues her waiting bill
     B-->>K: her bill arrives immediately (with the items)
 ```
 
@@ -224,12 +245,12 @@ Example with real numbers (coffee 60 by Gopal, tiffins 100 by Surya, cool drinks
 
 ```mermaid
 flowchart TD
-    P["you send a PDF<br/>(caption 'password 1234' if protected)"] --> T["extract the text (pypdf)"]
+    P["you send a PDF<br/>(caption 'password 1234' if protected)"] --> T["MCP server: statement_read_pdf<br/>extracts the text (pypdf)"]
     T -->|"password needed / wrong"| PW["🔒 resend with the password"]
     T -->|"scanned, no text"| SC["❌ needs a digital statement"]
-    T --> LLM["LLM reads the rows in chunks (2 at a time)<br/>date · amount · debit/credit · category"]
+    T --> LLM["bot's LLM reads the rows in chunks (2 at a time)<br/>date · amount · debit/credit · category<br/>(allowed categories come from the server)"]
     LLM -->|"any chunk fails"| FAIL["abort: nothing imported<br/>(a missing page would be wrong)"]
-    LLM --> V["code validates every date and amount"]
+    LLM --> V["MCP server: statement_preview<br/>code validates every date and amount"]
     V --> CL{"each row"}
     CL -->|"money in"| S1["skipped (this tracks spending only)"]
     CL -->|"ATM withdrawal"| S2["skipped (log what you spend the cash on)"]
@@ -237,7 +258,7 @@ flowchart TD
     CL -->|"same amount ±1 day as a hand entry"| S4["maybe: skipped unless you include it"]
     CL -->|"a debit"| NEW["new expense"]
     NEW --> PREV["preview with totals + buttons<br/>[Import N new] [Include maybes] [Cancel]"]
-    PREV --> APPLY["on confirm: expenses saved,<br/>budget alerts checked, [Undo this import]"]
+    PREV --> APPLY["on confirm (statement_apply): expenses saved,<br/>budget alerts checked, [Undo this import]"]
 ```
 
 ## 9. Budgets and alerts
@@ -277,10 +298,12 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    LOOP["background loop<br/>every 30 min"] --> Q["unpaid debts older than<br/>REMINDER_EVERY_HOURS (48)"]
-    Q --> D["debtor: delete the old bill message,<br/>send a fresh one with the items + [I paid]"]
+    LOOP["MCP server background job<br/>every 30 min"] --> Q["unpaid debts older than<br/>REMINDER_EVERY_HOURS (48)"]
+    Q --> D["debtor: queue 'delete the old bill message'<br/>and a fresh one with the items + [I paid]"]
     LOOP --> Q2["'says paid' debts nobody confirmed"]
-    Q2 --> C["person owed: 'Did you receive it?'<br/>[Received] [Not yet]"]
+    Q2 --> C["person owed: queue 'Did you receive it?'<br/>[Received] [Not yet]"]
+    D --> OBX["outbox → the bot's delivery loop<br/>sends it in Telegram"]
+    C --> OBX
     D --> STOP["stops when they tap I paid"]
     C --> STOP2["stops when they confirm"]
 ```

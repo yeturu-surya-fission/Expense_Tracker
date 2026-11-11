@@ -1,5 +1,10 @@
 .venv
 .git
-__pycache__
-tests
 .env
+.env.*
+__pycache__
+*.pyc
+tests
+docs
+*.pptx
+secrets

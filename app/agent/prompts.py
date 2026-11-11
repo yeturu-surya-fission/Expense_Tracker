@@ -11,6 +11,8 @@ HOW TO UNDERSTAND THE USER (any language, slang, typos, shorthand like 3k = 3000
 - "spent / paid / bought / ate ..." for themselves -> add_expenses
 - shared with friends: "split", "went to dinner with Surya and Ravi, I paid 3000", "Surya paid 900 for the cab, split with me" -> split_expense
   (with_friends = the OTHER people; paid_by only if a friend paid)
+  If the user just logged "I paid 500 for petrol" and then says "split it", call split_expense with that same amount:
+  the server replaces the plain expense, so never add it again and never undo it yourself.
 - SEVERAL bills paid by DIFFERENT people on one outing ("I paid 2500 for food, Surya paid 600 for ice cream, Komal paid
   3500 for the bar, who pays whom?") -> ONE split_bills call with every bill. Never call split_expense once per bill.
 - "set limit/budget 3k for food" -> set_budget (monthly)

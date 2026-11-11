@@ -1,3 +1,4 @@
+import logging
 import re
 
 from telegram import BotCommand
@@ -7,6 +8,10 @@ from app.agent.runner import AgentRunner
 from app.bot.handlers import BotHandlers
 from app.bot.keyboards import MENU
 from app.config import settings
+from app.mcp_client.gateway import McpGateway
+from app.mcp_client.types import McpError
+
+log = logging.getLogger(__name__)
 
 COMMANDS = [
     BotCommand("summary", "📊 Spending summary (browse months)"),
@@ -29,7 +34,7 @@ GROUP_COMMANDS = [
 ]
 
 
-def build_telegram_app(runner: AgentRunner, llm) -> Application:
+def build_telegram_app(runner: AgentRunner, llm, gateway: McpGateway) -> Application:
     token = settings.telegram_bot_token.strip().strip("\"'")
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is empty. Create a bot with @BotFather and put the token in .env")
@@ -38,7 +43,7 @@ def build_telegram_app(runner: AgentRunner, llm) -> Application:
             "TELEGRAM_BOT_TOKEN looks malformed. It must be '<digits>:<secret>', e.g. 1234567890:AAE... "
             "Copy the full token from @BotFather (/mybots -> API Token)."
         )
-    h = BotHandlers(runner, llm)
+    h = BotHandlers(runner, llm, gateway)
     private, groups = filters.ChatType.PRIVATE, filters.ChatType.GROUPS
     # concurrent_updates: one user's slow LLM call must not block everybody else
     app = Application.builder().token(token).concurrent_updates(True).build()
@@ -66,4 +71,18 @@ def build_telegram_app(runner: AgentRunner, llm) -> Application:
 
     # --- buttons everywhere
     app.add_handler(CallbackQueryHandler(h.on_callback))
+    app.add_error_handler(on_error)
     return app
+
+
+async def on_error(update, context) -> None:
+    """Anything a handler did not catch: tell the person instead of staying silent."""
+    log.error("handler failed", exc_info=context.error)
+    text = ("🔌 I can't reach the expense service right now. Please try again in a moment."
+            if isinstance(context.error, McpError) else "😵 Sorry, something went wrong. Please try again.")
+    target = getattr(update, "effective_message", None) or (getattr(update, "callback_query", None) and update.callback_query.message)
+    if target is not None:
+        try:
+            await target.reply_text(text)
+        except Exception:
+            pass

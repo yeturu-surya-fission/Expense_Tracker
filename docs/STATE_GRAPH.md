@@ -8,7 +8,10 @@ message moves through it, and the question that matters most:
 **Short answer.** Normally it does **not** go back to the agent. It stays in `tools` until every tool the AI asked for has run, then goes to
 `respond` and finishes. It returns to the agent only when a tool **fails** (for example a tool that isn't allowed in this chat).
 
-Related: [ARCHITECTURE.md](ARCHITECTURE.md) (structure) · [FLOWS.md](FLOWS.md) (feature flows)
+Related: [ARCHITECTURE.md](ARCHITECTURE.md) (structure) · [FLOWS.md](FLOWS.md) (feature flows) · [MCP.md](MCP.md) (tokens, tools, questions)
+
+> **Where the tools live.** The graph runs in the Telegram bot, but the tools do **not**: every tool call is an MCP request to the separate
+> MCP server, made with a token for the person who is chatting. The graph itself never touches expense data.
 
 ---
 
@@ -54,9 +57,9 @@ graph TD;
 
 | Node | What it does | Calls the LLM? |
 |---|---|---|
-| **agent** | Builds the system prompt (today's date, the person's budget categories and friends, or the group's name and members), sends the last 40 messages to the LLM **with the tool set for this chat type**, and gets back tool calls. If the LLM writes plain text instead, that text is thrown away and replaced by the fixed refusal. | **Yes** |
-| **tools** | Runs **one** pending tool call. Refuses a tool that isn't allowed in this chat (returns an error). May pause to ask the user a question. | No |
-| **respond** | Joins the tool results into one message, strips hidden markers (`(split #5)`, `(start #123)`) and passes them on as data so the bot can add **Undo / Cancel split** buttons and tag people who need to press Start. | No |
+| **agent** | Asks the MCP server for the context (`agent_context`: budget categories and friends, or the group's name and members), builds the system prompt (today's date + that), sends the last 40 messages to the LLM **with the tool set for this chat type**, and gets back tool calls. If the LLM writes plain text instead, that text is thrown away and replaced by the server's fixed refusal. | **Yes** |
+| **tools** | Runs **one** pending tool call as an **MCP request** (Bearer token of this person, an idempotency key, the group's member count if in a group). Refuses a tool that isn't allowed in this chat. If the server answers `input_required`, pauses to ask the user, then calls the same tool again with the answer. | No |
+| **respond** | Joins the tool results into one message and passes the structured `data` the server returned (expense ids, split ids, people to tag) on to the bot, so it can add **Undo / Cancel split** buttons and tag people who need to press Start. | No |
 
 ### The two routing rules (the only decisions in the graph)
 
@@ -80,7 +83,8 @@ flowchart LR
     GT --> TN
 ```
 
-Personal money never appears in a group chat: the model isn't even shown those tools, and the tools node refuses them if they are called anyway.
+Personal money never appears in a group chat: the model isn't even shown those tools, the tools node refuses them if they are called anyway,
+and the **server refuses them again** because the group session token says the chat is a group.
 
 ---
 
@@ -95,7 +99,7 @@ sequenceDiagram
     participant A as agent node
     participant L as LLM
     participant T as tools node
-    participant C as core and database
+    participant C as MCP server
     participant P as respond node
 
     U->>B: "spent 300 on ice cream"
@@ -105,8 +109,8 @@ sequenceDiagram
     A->>L: system prompt + chat history + this chat's tools
     L-->>A: tool call add_expenses(300, food, ice cream)
     A->>T: route to tools
-    T->>C: run the tool, save the expense
-    C-->>T: "Spent ₹300… (#12)"
+    T->>C: MCP request add_expenses (Bearer token)
+    C-->>T: {status: ok, text: "Spent ₹300… (#12)", data: {expense_ids: [12]}}
     T->>P: nothing left to run, all OK
     P-->>R: final text + data for the Undo button
     R-->>B: reply
@@ -161,15 +165,17 @@ already finished are never run twice, so nothing is written twice.
  LLM calls: 1
 ```
 
-The pause happens **inside** `tools`. Tapping a button resumes the same tool; the agent isn't called again. The paused state lives in Postgres,
-so it survives a restart.
+The pause happens **inside** `tools`. The server did not write anything: it returned `input_required` with the question. Tapping a button resumes
+the node, which calls the **same tool again** with the answer (`answers={"split_mode": "equal"}`); the agent isn't called again. The paused state
+lives in the bot's Postgres, so it survives a restart. A tool may ask two questions in a row (*one-off or group?* then *how to split?*): the node
+simply loops, one pause per question.
 
 ```mermaid
 stateDiagram-v2
     direction LR
     agent --> tools : split_expense, no split method said
-    tools --> paused : interrupt() asks equally or amounts, state saved in Postgres
-    paused --> tools : the user taps a button (resume)
+    tools --> paused : server says input_required, interrupt() saves state in Postgres
+    paused --> tools : the user taps a button, the tool is called again with the answer
     tools --> respond : finished OK
     respond --> [*]
 ```
@@ -205,7 +211,7 @@ stateDiagram-v2
 | 5 | Greeting, off-topic, "need more info" | agent → tools (`respond_to_user`, fixed wording) → respond → END | 1 |
 | 6 | The AI breaks the rules with plain text | agent → END (the fixed refusal is sent) | 1 |
 | 7 | You cancel or change topic while a question waits | tools resumes with "cancel" → respond → END, then your new message starts at START | 0 + a new run |
-| 8 | Menu buttons, commands, **I paid / Received** taps, group `/group` and `/settle` | never enter the graph: answered straight from `core` | 0 |
+| 8 | Menu buttons, commands, **I paid / Received** taps, group `/group` and `/settle` | never enter the graph: the bot calls the MCP server directly | 0 |
 | 9 | Group chat message that doesn't mention the bot | ignored before the graph | 0 |
 
 A tool that keeps failing is stopped by a 40-step safety limit, and the user gets a friendly error.
@@ -246,8 +252,11 @@ so each person has their own conversation memory and their own paused questions,
 
 | Piece | File |
 |---|---|
-| Graph, routing rules, `respond` node, per-chat tool sets | `app/agent/graph.py` |
-| Tool lists (private / group) | `app/tools/__init__.py` |
-| Pause and resume (`ask_choice` / `interrupt`) | `app/tools/_common.py`, `app/agent/runner.py` |
-| Hidden markers → buttons | `app/core/markers.py` |
-| Guardrail wording | `app/agent/guardrails.py`, `app/tools/conversation.py` |
+| Graph, routing rules, `respond` node, the question loop | `app/agent/graph.py` |
+| Tool lists shown to the LLM (private / group) | `app/agent/toolsets.py` |
+| Pause and resume (`interrupt`, answer screening) | `app/agent/runner.py` |
+| MCP requests, tokens, tool schemas for the LLM | `app/mcp_client/gateway.py`, `app/mcp_client/schema.py` |
+| The tools themselves, their gate (scope, chat, rate limit, idempotency) | `mcp_server/tools/registry.py`, `mcp_server/tools/*.py` |
+| How a tool asks a question (`NeedInput` before any write) | `mcp_server/tools/_common.py` |
+| Structured data → buttons | `ToolResult.data` → `respond` node → `app/bot/keyboards.py` |
+| Guardrail wording (refusal, greeting, help) | `mcp_server/domain/guardrails.py`, `mcp_server/tools/conversation.py` |

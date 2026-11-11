@@ -1,27 +1,82 @@
+# Two services that only talk over HTTP:
+#   mcp  - the MCP server: tools, expense database, authentication  (port 8001)
+#   bot  - the Telegram bot: Telegram + the AI agent; reaches expense data ONLY through the MCP server (port 8000)
+# Each has its own database. Secrets come from your .env file (never baked into images); each service gets only what it needs.
 services:
-  db:
+  mcp-db:
     image: postgres:16
     environment:
       POSTGRES_USER: expense
-      POSTGRES_PASSWORD: expense
-      POSTGRES_DB: expense_tracker
-    ports: ["5432:5432"]
-    # a NEW volume: the earlier cash/bank version's data (volume "pgdata") is left untouched
-    volumes: [pgdata_expense:/var/lib/postgresql/data]
+      POSTGRES_PASSWORD: ${MCP_DB_PASSWORD:-expense}
+      POSTGRES_DB: expense_mcp
+    # a NEW volume: older volumes (pgdata from the cash/bank version, pgdata_expense from the monolith) are left untouched
+    volumes: [pgdata_mcp:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U expense -d expense_tracker"]
+      test: ["CMD-SHELL", "pg_isready -U expense -d expense_mcp"]
       interval: 3s
       retries: 20
 
-  app:
-    build: .
-    env_file: .env
+  bot-db:
+    image: postgres:16
     environment:
-      DATABASE_URL: postgresql+asyncpg://expense:expense@db:5432/expense_tracker
+      POSTGRES_USER: expense
+      POSTGRES_PASSWORD: ${BOT_DB_PASSWORD:-expense}
+      POSTGRES_DB: expense_bot
+    volumes: [pgdata_bot:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U expense -d expense_bot"]
+      interval: 3s
+      retries: 20
+
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    environment:
+      MCP_DATABASE_URL: postgresql+asyncpg://expense:${MCP_DB_PASSWORD:-expense}@mcp-db:5432/expense_mcp
+      MCP_AUTO_CREATE_TABLES: "false"   # Alembic creates the schema
+      MCP_ENV: ${MCP_ENV:-dev}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://mcp:8001}
+      MCP_BOT_CLIENT_SECRET: ${MCP_BOT_CLIENT_SECRET:?set MCP_BOT_CLIENT_SECRET in .env (a long random string shared with the bot)}
+      MCP_JWT_PRIVATE_KEY: ${MCP_JWT_PRIVATE_KEY:-}
+      MCP_ALLOWED_TELEGRAM_IDS: ${ALLOWED_TELEGRAM_IDS:-}
+      MCP_CURRENCY_SYMBOL: ${CURRENCY_SYMBOL:-₹}
+      MCP_TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
+      MCP_BUDGET_ALERT_THRESHOLDS: ${BUDGET_ALERT_THRESHOLDS:-50,80,100}
+      MCP_REMINDER_EVERY_HOURS: ${REMINDER_EVERY_HOURS:-48}
+      MCP_ASK_GROUP_MIN_PEOPLE: ${ASK_GROUP_MIN_PEOPLE:-4}
+    ports: ["8001:8001"]
+    depends_on:
+      mcp-db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/healthz', timeout=3).status == 200 else 1)"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
+      TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-change-me}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_MODEL: ${LLM_MODEL:-}
+      TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
+      MCP_SERVER_URL: http://mcp:8001/mcp
+      MCP_BOT_CLIENT_ID: telegram-bot
+      MCP_BOT_CLIENT_SECRET: ${MCP_BOT_CLIENT_SECRET:?set MCP_BOT_CLIENT_SECRET in .env}
+      BOT_DATABASE_URL: postgresql://expense:${BOT_DB_PASSWORD:-expense}@bot-db:5432/expense_bot
     ports: ["8000:8000"]
     depends_on:
-      db: { condition: service_healthy }
+      bot-db: { condition: service_healthy }
+      mcp: { condition: service_healthy }
     restart: unless-stopped
 
 volumes:
-  pgdata_expense:
+  pgdata_mcp:
+  pgdata_bot:

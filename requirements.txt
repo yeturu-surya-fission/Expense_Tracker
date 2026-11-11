@@ -1,22 +1,3 @@
-fastapi>=0.115
-uvicorn[standard]>=0.30
-sqlalchemy[asyncio]>=2.0.30
-asyncpg>=0.29
-pydantic>=2.7
-pydantic-settings>=2.3
-python-telegram-bot>=21.5
-tzdata
-
-# agent brain
-langchain-core>=0.3
-langgraph>=0.4
-langgraph-checkpoint-postgres>=2.0
-psycopg[binary,pool]>=3.2
-
-# LLM providers (any one is enough at runtime; the key decides which is used)
-langchain-google-genai>=2.0
-langchain-openai>=0.2
-langchain-anthropic>=0.3
-langchain-groq>=0.2
-pypdf>=5.0
-cryptography>=43
+# everything, for local development (the two services install only their own file in Docker)
+-r requirements-mcp.txt
+-r requirements-bot.txt
