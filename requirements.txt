@@ -6,6 +6,7 @@ pydantic>=2.7
 pydantic-settings>=2.3
 python-telegram-bot>=21.5
 tzdata
+fastmcp>=4.1.5
 
 # agent brain
 langchain-core>=0.3
@@ -13,10 +14,8 @@ langgraph>=0.4
 langgraph-checkpoint-postgres>=2.0
 psycopg[binary,pool]>=3.2
 
-# LLM providers (any one is enough at runtime; the key decides which is used)
-langchain-google-genai>=2.0
+# LLM gateway (CodeVector is OpenAI-compatible)
 langchain-openai>=0.2
-langchain-anthropic>=0.3
-langchain-groq>=0.2
 pypdf>=5.0
 cryptography>=43
+pyjwt>=2.10

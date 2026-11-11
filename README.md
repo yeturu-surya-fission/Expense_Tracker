@@ -87,7 +87,7 @@ flowchart LR
     BOT -->|"menu buttons, /commands<br/>(no LLM)"| CORE
     BOT -->|"PDF"| ST["Statement import"] --> CORE
     AG --> TOOLS["Tools"] --> CORE["Core<br/>expenses · budgets · splits<br/>groups · debts · reports"]
-    AG --> LLM["☁️ Gemini / OpenAI /<br/>Anthropic / Groq"]
+    AG --> LLM["☁️ CodeVector<br/>OpenAI-compatible gateway"]
     CORE -->|"notify friends"| NOTI["Notifier → Telegram"]
     CORE --> DB[("PostgreSQL")]
     AG --> DB
@@ -114,7 +114,7 @@ the pause is saved in Postgres so it survives restarts.
 ## Run
 
 1. Telegram: @BotFather → `/newbot` → copy the token (the **whole** token, `123456789:AAE...`). Your id: @userinfobot.
-2. `cp .env.example .env` and fill `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`, `ALLOWED_TELEGRAM_IDS`.
+2. `cp .env.example .env` and fill `TELEGRAM_BOT_TOKEN`, `CODEVECTOR_API_KEY`, `CODEVECTOR_BASE_URL`, `ALLOWED_TELEGRAM_IDS`.
 3. **Docker (recommended):** `docker compose up --build`. This uses a **new database** (`expense_tracker`, volume `pgdata_expense`);
    the earlier cash/bank data in the old `pgdata` volume is untouched (delete it with `docker volume rm` when you no longer need it).
 

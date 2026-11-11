@@ -28,7 +28,7 @@ flowchart LR
         REM["Reminder loop<br/>every 30 minutes"]
     end
 
-    LLM["☁️ Gemini / OpenAI /<br/>Anthropic / Groq"]
+    LLM["☁️ CodeVector<br/>OpenAI-compatible gateway"]
     DB[("PostgreSQL<br/>expense tables +<br/>agent memory")]
 
     PC <-->|"messages, buttons, files"| BOT
@@ -220,11 +220,7 @@ Shares are exact to the paisa, and the odd paise rotate between people so nobody
 ```mermaid
 flowchart LR
     ENV[".env"] --> CFG["config.py<br/>(strips quotes and inline comments)"]
-    CFG --> KEY{"LLM_API_KEY prefix"}
-    KEY -->|"AIza… / AQ."| G["Gemini"]
-    KEY -->|"sk-ant-"| AN["Anthropic"]
-    KEY -->|"gsk_"| GR["Groq"]
-    KEY -->|"sk-"| O["OpenAI"]
+    CFG --> CV["CodeVector gateway<br/>CODEVECTOR_API_KEY<br/>CODEVECTOR_BASE_URL<br/>CODEVECTOR_MODEL"]
 
     subgraph DC["docker compose"]
         W["app<br/>(FastAPI + bot)"] --> PG[("postgres:16<br/>database expense_tracker<br/>volume pgdata_expense")]
@@ -236,7 +232,7 @@ flowchart LR
 |---|---|
 | `TELEGRAM_MODE` | `polling` for local/dev, `webhook` for production (needs `PUBLIC_URL`) |
 | `ALLOWED_TELEGRAM_IDS` | the owner side: who may use the bot and add it to groups; empty means everyone |
-| `LLM_API_KEY` / `LLM_PROVIDER` / `LLM_MODEL` | the brain; provider is auto-detected from the key |
+| `CODEVECTOR_API_KEY` / `CODEVECTOR_BASE_URL` / `CODEVECTOR_MODEL` | the brain; CodeVector is the only LLM gateway |
 | `REMINDER_EVERY_HOURS` | how often an unpaid share is re-sent (default 48) |
 | `ASK_GROUP_MIN_PEOPLE` | a one-off split this big first asks "one-off or create a group?" (default 4) |
 | `BUDGET_ALERT_THRESHOLDS` | default `50,80,100` |
