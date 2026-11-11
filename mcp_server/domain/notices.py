@@ -190,6 +190,13 @@ def group_setup_help(name: str | None = None) -> str:
     ])
 
 
+async def net_leftovers(session: AsyncSession, user_id: int) -> list[str]:
+    """Before showing dues: cancel anything two people still owe each other both ways. Returns this person's notes."""
+    from mcp_server.domain.debts import net_all  # local import, as below
+
+    return [t for off in await net_all(session, user_id) if (t := (await notify_offset(session, off, set())).get(user_id))]
+
+
 async def notify_offset(session: AsyncSession, off, new_debt_ids: set[int]) -> dict[int, str]:
     """
     Tell both people that what they owed each other was netted. Older bills that are gone disappear from the debtor's chat;

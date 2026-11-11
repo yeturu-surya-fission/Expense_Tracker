@@ -40,7 +40,8 @@ async def ui_view(call, view: str, arg: str | None = None) -> Out:
         elif view == "friends":
             text = await views.friends_text(s, uid)
         elif view == "dues":
-            text = await views.dues_text(s, uid)
+            notes = await notices.net_leftovers(s, uid)
+            text = "\n".join([*notes, await views.dues_text(s, uid)])
             data = {"dues": await views.dues_data(s, uid)}
         elif view == "daily":
             text = await views.daily_text(s, uid, arg)

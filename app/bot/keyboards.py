@@ -1,28 +1,8 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.util.periods import month_key, month_label, shift_month
 
-# Persistent menu under the text box. Label -> action; handled WITHOUT the LLM (instant).
-MENU = {
-    "📊 Summary": "summary",
-    "🧾 Recent": "recent",
-    "🎯 Budgets": "budgets",
-    "👥 Friends": "friends",
-    "💳 Dues": "dues",
-    "↩️ Undo last": "undo",
-    "❓ Help": "help",
-}
-
 PERIODS = {"today": "Today", "this_week": "This week", "this_month": "This month", "last_month": "Last month"}
-
-
-def main_menu() -> ReplyKeyboardMarkup:
-    labels = list(MENU)
-    rows = [[KeyboardButton(x) for x in labels[i:i + 2]] for i in range(0, len(labels), 2)]
-    return ReplyKeyboardMarkup(
-        rows, resize_keyboard=True, is_persistent=True,
-        input_field_placeholder="e.g. spent 300 on ice cream",
-    )
 
 
 def choice_keyboard(choices: list[dict], owner_telegram_id: int | None = None) -> InlineKeyboardMarkup:

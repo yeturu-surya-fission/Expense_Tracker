@@ -102,6 +102,7 @@ async def dues_text(s: AsyncSession, user_id: int) -> str:
     if owe:
         lines += ["", "You owe:"]
         lines += await _per_person(s, user_id, owe, "creditor_id", "marked paid, waiting for them to confirm")
+        lines.append("\nPaid only part? Say e.g. \"I paid Surya 300\" and the rest stays due.")
     if owed:
         lines += ["", "Owed to you:"]
         lines += await _per_person(s, user_id, owed, "debtor_id", "says they paid: please confirm")

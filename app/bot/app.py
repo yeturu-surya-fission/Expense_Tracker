@@ -6,7 +6,6 @@ from telegram.ext import Application, CallbackQueryHandler, ChatMemberHandler, C
 
 from app.agent.runner import AgentRunner
 from app.bot.handlers import BotHandlers
-from app.bot.keyboards import MENU
 from app.config import settings
 from app.mcp_client.gateway import McpGateway
 from app.mcp_client.types import McpError
@@ -15,7 +14,7 @@ log = logging.getLogger(__name__)
 
 COMMANDS = [
     BotCommand("summary", "📊 Spending summary (browse months)"),
-    BotCommand("recent", "🧾 Latest expenses"),
+    BotCommand("history", "🧾 Recent expenses"),
     BotCommand("budgets", "🎯 Budget progress"),
     BotCommand("friends", "👥 My friends"),
     BotCommand("dues", "💳 Who owes whom"),
@@ -28,8 +27,9 @@ COMMANDS = [
 
 
 GROUP_COMMANDS = [
-    BotCommand("group", "🧳 Who paid what and who is owed"),
     BotCommand("settle", "✅ Settle up the group"),
+    BotCommand("people", "👥 Who is in this group"),
+    BotCommand("summary", "📊 Who paid what and who is owed"),
     BotCommand("help", "❓ How to use me here"),
 ]
 
@@ -51,9 +51,7 @@ def build_telegram_app(runner: AgentRunner, llm, gateway: McpGateway) -> Applica
     # --- private chat
     app.add_handler(CommandHandler("start", h.start, filters=private))
     app.add_handler(CommandHandler("help", h.help, filters=private))
-    app.add_handler(CommandHandler(["summary", "recent", "budgets", "friends", "dues", "invite", "daily", "trend", "undo"], h.on_command, filters=private))
-    menu_regex = "^(" + "|".join(re.escape(label) for label in MENU) + ")$"
-    app.add_handler(MessageHandler(private & filters.Regex(menu_regex), h.on_menu))
+    app.add_handler(CommandHandler(["summary", "history", "recent", "budgets", "friends", "dues", "invite", "daily", "trend", "undo"], h.on_command, filters=private))
     app.add_handler(MessageHandler(private & filters.Document.ALL, h.on_document))
     app.add_handler(MessageHandler(private & filters.PHOTO, h.on_other_file))
     app.add_handler(MessageHandler(private & filters.TEXT & ~filters.COMMAND, h.on_text))
@@ -65,7 +63,8 @@ def build_telegram_app(runner: AgentRunner, llm, gateway: McpGateway) -> Applica
     app.add_handler(MessageHandler(groups & filters.StatusUpdate.NEW_CHAT_TITLE, h.on_title_change))
     app.add_handler(MessageHandler(groups & filters.StatusUpdate.MIGRATE, h.on_migrate))
     app.add_handler(CommandHandler(["start", "help"], h.group_help, filters=groups))
-    app.add_handler(CommandHandler("group", h.cmd_group, filters=groups))
+    app.add_handler(CommandHandler(["summary", "group"], h.cmd_group, filters=groups))  # /group = the old name
+    app.add_handler(CommandHandler("people", h.cmd_people, filters=groups))
     app.add_handler(CommandHandler("settle", h.cmd_settle, filters=groups))
     app.add_handler(MessageHandler(groups & filters.TEXT & ~filters.COMMAND, h.on_group_text))
 
