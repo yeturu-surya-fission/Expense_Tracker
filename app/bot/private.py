@@ -1,5 +1,5 @@
-"""Private chat: /start, menu buttons, commands and free text. Every answer comes from an MCP tool call."""
-from telegram import Update
+"""Private chat: /start, commands and free text. Every answer comes from an MCP tool call."""
+from telegram import ReplyKeyboardRemove, Update
 from telegram.ext import ContextTypes
 
 from app.bot import keyboards as kb
@@ -27,7 +27,7 @@ class PrivateMixin(BotBase):
             await msg.reply_text(res.message)
         else:
             await self.gateway.session_token(ident, force=True)
-        await msg.reply_text(await self._help_text(tg), reply_markup=kb.main_menu())
+        await msg.reply_text(await self._help_text(tg), reply_markup=ReplyKeyboardRemove())  # also clears the old bottom menu
 
     async def _accept_invite(self, tg, msg, inviter_tg: str) -> bool:
         """Someone opened a friend's invite link: the server connects them both (each side uses the other's Telegram name)."""
@@ -42,9 +42,9 @@ class PrivateMixin(BotBase):
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
-            await update.effective_message.reply_text(await self._help_text(update.effective_user), reply_markup=kb.main_menu())
+            await update.effective_message.reply_text(await self._help_text(update.effective_user), reply_markup=ReplyKeyboardRemove())
 
-    # ------------------------------------------------------------ commands + menu (no LLM, instant)
+    # ------------------------------------------------------------ commands (no LLM, instant)
     async def _direct(self, tg, message, action: str) -> None:
         ident = self.private(tg)
         if action == "summary":
@@ -67,18 +67,10 @@ class PrivateMixin(BotBase):
             await message.reply_text((await self.call(ident, "ui_view", view=action)).message)
 
     async def on_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """/summary /recent /budgets /friends /dues /daily /trend /invite /undo"""
+        """/summary /history /budgets /friends /dues /daily /trend /invite /undo"""
         if await self._guard(update):
-            action = update.effective_message.text.split()[0].lstrip("/").split("@")[0]
-            await self._direct(update.effective_user, update.effective_message, action)
-
-    async def on_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update):
-            return
-        action = kb.MENU[update.effective_message.text]
-        if action == "help":
-            await self.help(update, context)
-        else:
+            action = update.effective_message.text.split()[0].lstrip("/").split("@")[0].lower()
+            action = "recent" if action == "history" else action
             await self._direct(update.effective_user, update.effective_message, action)
 
     # ------------------------------------------------------------ free text -> agent

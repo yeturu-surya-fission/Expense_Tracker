@@ -64,11 +64,12 @@ async def test_text_expense_and_undo_button(make_handlers):
     assert any("already undone" in s["text"] for s in bot_msg.sent)
 
 
-async def test_start_shows_help_and_menu(make_handlers):
+async def test_start_shows_help_and_clears_the_old_bottom_menu(make_handlers):
     h, bot = make_handlers(), FakeBot()
     user, msg = private_msg(new_telegram_id(), "/start")
     await h.start(update(user, msg), context(bot))
-    assert "expense tracker" in msg.sent[-1]["text"].lower() and msg.sent[-1]["markup"] is not None
+    assert "expense tracker" in msg.sent[-1]["text"].lower()
+    assert type(msg.sent[-1]["markup"]).__name__ == "ReplyKeyboardRemove"  # no permanent buttons under the text box
 
 
 async def test_strangers_are_turned_away_by_the_servers_allow_list(make_handlers, monkeypatch):
@@ -100,7 +101,7 @@ async def test_menu_commands_and_month_navigation(make_handlers):
     h, bot = make_handlers(tool_call("add_expenses", {"items": [{"amount": 120, "category": "food", "description": "lunch"}]})), FakeBot()
     user, msg = private_msg(new_telegram_id(), "lunch 120")
     await h.on_text(update(user, msg), context(bot))
-    for text in ("/summary", "/recent", "/budgets", "/friends", "/dues", "/daily", "/trend", "/invite", "/undo"):
+    for text in ("/summary", "/history", "/recent", "/budgets", "/friends", "/dues", "/daily", "/trend", "/invite", "/undo"):
         _, m = private_msg(user.id, text)
         m.from_user = user
         await h.on_command(update(user, m), context(bot))
@@ -245,6 +246,9 @@ async def test_group_commands_and_silence_without_a_mention(make_handlers):
     cmd = FakeMessage("/group", chat, ana)
     await h.cmd_group(update(ana, cmd), context(bot))
     assert "Flat" in cmd.sent[-1]["text"]
+    people = FakeMessage("/people", chat, ana)
+    await h.cmd_people(update(ana, people), context(bot))
+    assert "Ana" in people.sent[-1]["text"] and "Flat" in people.sent[-1]["text"]
     cmd2 = FakeMessage("/settle", chat, ana)
     await h.cmd_settle(update(ana, cmd2), context(bot))
     assert "Nothing to settle" in cmd2.sent[-1]["text"]

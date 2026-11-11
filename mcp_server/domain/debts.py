@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mcp_server.domain import friends
 from mcp_server.domain.errors import DebtError
+from mcp_server.domain.expenses import to_decimal
+from mcp_server.domain.formatting import money
 from mcp_server.domain.splits import log_user_shares
 from mcp_server.db.models import Debt, Expense, Share
 
@@ -78,12 +80,12 @@ async def reject(session: AsyncSession, debt_id: int, by_user_id: int) -> Debt:
     ids = list(debt.expense_ids or [])
     # A person who owes several people records their whole share once, on their first payment. If another payment of
     # theirs in the same settlement still stands, the expense stays and moves over to that payment.
-    scope = (Debt.bundle_id == debt.bundle_id) if debt.kind == "bundle" else (Debt.group_id == debt.group_id)
-    other = None
-    if debt.kind in ("bundle", "group"):
-        other = (await session.execute(
-            select(Debt).where(Debt.debtor_id == debt.debtor_id, Debt.id != debt.id, Debt.status.in_(("claimed", "settled")), scope).limit(1).with_for_update()
-        )).scalar_one_or_none()
+    # (a quick split paid in two parts has two debts for the same bill, so it needs the same care)
+    scope = (Debt.bundle_id == debt.bundle_id) if debt.kind == "bundle" else (
+        (Debt.group_id == debt.group_id) if debt.kind == "group" else (Debt.shared_expense_id == debt.shared_expense_id))
+    other = (await session.execute(
+        select(Debt).where(Debt.debtor_id == debt.debtor_id, Debt.id != debt.id, Debt.status.in_(("claimed", "settled")), scope).limit(1).with_for_update()
+    )).scalar_one_or_none()
     if ids and other is not None:
         other.expense_ids = list(dict.fromkeys([*(other.expense_ids or []), *ids]))
         ids = []
@@ -98,6 +100,58 @@ async def reject(session: AsyncSession, debt_id: int, by_user_id: int) -> Debt:
     debt.creditor_msg_id = None
     await session.flush()
     return debt
+
+
+async def pay_amount(session: AsyncSession, debtor_id: int, creditor_id: int, amount: Decimal) -> tuple[list[Debt], list[Expense], Decimal]:
+    """
+    'I paid Surya 300': take exactly that much off what the debtor owes this person, oldest bill first. A bill bigger than
+    what is left is cut in two: the paid part is marked paid (waiting for the other side to confirm), the rest stays unpaid.
+    Returns (the debts now marked paid, the debtor's new expenses, what is still owed).
+    """
+    amount = to_decimal(amount)
+    if amount <= 0:
+        raise DebtError("The amount must be more than zero.")
+    rows = list((await session.execute(
+        select(Debt).where(Debt.status == "pending", Debt.debtor_id == debtor_id, Debt.creditor_id == creditor_id).order_by(Debt.id).with_for_update()
+    )).scalars().all())
+    owed = sum((d.amount for d in rows), Decimal(0))
+    if owed <= 0:
+        raise DebtError("You don't owe them anything that is still unpaid.")
+    if amount > owed:
+        raise DebtError(f"You only owe them {money(owed)}, so {money(amount)} is too much.")
+    claimed: list[Debt] = []
+    created: list[Expense] = []
+    left = amount
+    for d in rows:
+        if left <= 0:
+            break
+        if d.amount > left:  # cut the bill: `part` is what is paid now, `d` keeps the rest
+            part = Debt(
+                debtor_id=d.debtor_id, creditor_id=d.creditor_id, amount=left, description=d.description, kind=d.kind,
+                bundle_id=d.bundle_id, shared_expense_id=d.shared_expense_id, group_id=d.group_id, detail=d.detail, status="pending",
+            )
+            d.amount -= left
+            session.add(part)
+            await session.flush()
+            d = part
+        left -= d.amount
+        _, exps = await claim(session, d.id, debtor_id)
+        claimed.append(d)
+        created += exps
+    return claimed, created, owed - amount
+
+
+async def net_all(session: AsyncSession, user_id: int) -> "list[Offset]":
+    """Cancel every pair this person has unpaid debts with in BOTH directions (also ones that were left over, e.g. after a 'not yet')."""
+    rows = (await session.execute(
+        select(Debt.debtor_id, Debt.creditor_id).where(Debt.status == "pending", or_(Debt.debtor_id == user_id, Debt.creditor_id == user_id))
+    )).all()
+    pairs = {(d, c) for d, c in rows}
+    out = []
+    for other in sorted({c if d == user_id else d for d, c in pairs if (c, d) in pairs}):
+        if (o := await offset_between(session, user_id, other)) is not None:
+            out.append(o)
+    return out
 
 
 async def dues(session: AsyncSession, user_id: int) -> tuple[list[Debt], list[Debt]]:

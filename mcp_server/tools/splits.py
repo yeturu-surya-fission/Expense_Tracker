@@ -166,7 +166,35 @@ async def split_expense(
 async def my_dues(call) -> Out:
     """Show who the user owes money to and who owes the user money (split bills and group settlements), one total per person."""
     async with session_scope() as s:
-        return Out(await views.dues_text(s, call.user_id), {"dues": await views.dues_data(s, call.user_id)})
+        notes = await notices.net_leftovers(s, call.user_id)
+        return Out("\n".join([*notes, await views.dues_text(s, call.user_id)]), {"dues": await views.dues_data(s, call.user_id)})
+
+
+@tool(contexts=("private",), write=True)
+async def pay_friend(call, friend: str, amount: float | None = None) -> Out:
+    """The user says they PAID a friend (all or part of what they owe): 'I paid Surya 300', 'paid Ravi back', 'gave Komal 150'.
+    friend: the name as the user said it. amount: how much they paid; leave null for 'everything I owe them'.
+    Only that amount is taken off what they owe; the rest stays due. The friend is asked to confirm they received it."""
+    uid = call.user_id
+    async with session_scope() as s:
+        other = await friends.resolve_user(s, uid, friend)
+        who = await friends.nickname_of(s, uid, other)
+        pay = Decimal(str(amount)) if amount is not None else await debt_logic.pending_between(s, uid, other.id)
+        if pay <= 0:
+            return f"You don't owe {who} anything that is still unpaid."
+        claimed, created, left = await debt_logic.pay_amount(s, uid, other.id, pay)
+        alerts = await budgets.alerts_for(s, uid, created)
+        ids = [d.id for d in claimed]
+        logged = sum((e.amount for e in created), Decimal(0))
+    async with session_scope() as s:  # tell the friend (after the data is saved)
+        await notices.notify_claim_bulk(s, list((await s.execute(select(Debt).where(Debt.id.in_(ids)).order_by(Debt.id))).scalars().all()))
+    lines = [f"✅ Noted: you paid {who} {money(pay)}. I've asked them to confirm they received it."]
+    if logged:
+        lines.append(f"💾 {money(logged)} added to your expenses.")
+    lines.append(f"Still to pay {who}: {money(left)}." if left > 0 else f"You're all square with {who}.")
+    async with session_scope() as s:
+        data = {"dues": await views.dues_data(s, uid)}
+    return Out("\n".join([*lines, *alerts]), {"debt_ids": ids, **data})
 
 
 @tool(contexts=("private", "group"), write=True)

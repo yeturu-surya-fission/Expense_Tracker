@@ -23,7 +23,7 @@ HELP = (
     "• dinner 3000, split equally with Surya and Ravi\n"
     "• /dues shows who owes whom\n\n"
     "🧳 Trips: create a Telegram group, add your friends and add me. Anyone there can mention me ('@me I paid 1000 for petrol') and say '@me split the bill'.\n\n"
-    "Use the menu below for instant answers."
+    "Type / to see every command: /summary /dues /history /budgets /friends /invite /daily /trend /undo /help."
 )
 
 MAX_CLARIFY_CHARS = 200

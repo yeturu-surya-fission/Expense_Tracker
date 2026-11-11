@@ -28,7 +28,7 @@ GROUP_HELP = (
     "• @{bot} I paid 1000 for petrol\n"
     "• @{bot} Surya paid 600 for ice cream, split between me and Surya\n"
     "• @{bot} split the bill   (or: settle up)\n\n"
-    "Shortcuts: /group (who paid what) and /settle."
+    "Commands: /summary (who paid what), /people (who is in), /settle and /help."
 )
 IN_CHAT = ("member", "administrator", "creator", "restricted")
 
@@ -172,6 +172,22 @@ class GroupMixin(BotBase):
         count = await self.member_count(context.bot, msg.chat)
         res = await self.gateway.call(self.in_group(tg, msg.chat), "group_summary", member_count=count)
         await msg.reply_text(res.message)
+
+    async def cmd_people(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        msg, tg = update.effective_message, update.effective_user
+        if not await self._group_ready(msg.chat, tg):
+            return
+        info = (await self.gateway.call(self.in_group(tg, msg.chat), "agent_context")).data
+        names = info.get("members") or []
+        if not names:
+            await msg.reply_text("I don't know anyone in this group yet. Everyone should @mention me once.")
+            return
+        count = await self.member_count(context.bot, msg.chat)
+        lines = [f"👥 {info.get('group') or 'This group'} · {len(names)} people", *(f"• {n}" for n in names)]
+        if count and count - 1 > len(names):  # the bot is one of the chat's members
+            lines += ["", f"⚠️ The chat has {count - 1} people. The other {count - 1 - len(names)} should @mention me once so I can include them."]
+        text = "\n".join(lines)
+        await msg.reply_text(text)
 
     async def cmd_settle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg, tg = update.effective_message, update.effective_user

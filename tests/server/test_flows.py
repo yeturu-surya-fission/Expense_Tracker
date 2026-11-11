@@ -490,6 +490,71 @@ async def test_partial_netting_leaves_one_smaller_total(harness, alice, bob):
     assert "Alice  ₹800" in owes and "Owed to you" not in owes
 
 
+async def test_he_paid_then_i_paid_in_one_chat_cancels_out(harness, alice, bob):
+    """Everything typed in ONE person's chat: 'Bob paid 100, split with me', then 'I paid 100, split with Bob'."""
+    await befriend(alice, bob, "Bob")
+    first = await alice.ok("split_expense", amount=100, description="lunch", with_friends=["Bob"], paid_by="Bob", split="equal")
+    assert "owe" in first["text"]
+    second = await alice.ok("split_expense", amount=100, description="dinner", with_friends=["Bob"], split="equal")
+    assert "cancelled out" in second["text"], second["text"]
+    assert "all clear" in (await alice.ok("my_dues"))["text"].lower()
+    assert "all clear" in (await bob.ok("my_dues"))["text"].lower()
+
+
+# ------------------------------------------------------------------ paying part of what you owe
+async def test_paying_part_keeps_the_rest_due_and_the_friend_confirms(harness, alice, bob):
+    await befriend(alice, bob, "Bob")
+    await befriend(bob, alice, "Alice")
+    for what, amount in (("tea", 100), ("pizza", 600)):  # Bob owes 50 + 300 = 350
+        await alice.ok("split_expense", amount=amount, description=what, with_friends=["Bob"], split="equal")
+    await drain(harness)
+
+    over = await bob.call("pay_friend", friend="Alice", amount=500)
+    assert over["status"] == "rejected" and "only owe" in over["text"]
+
+    part = await bob.ok("pay_friend", friend="Alice", amount=100)  # cuts the second bill in two
+    assert "₹100" in part["text"] and "Still to pay Alice: ₹250" in part["text"]
+    mine = (await bob.ok("my_dues"))["data"]["dues"]["owe"][0]
+    assert mine["total"] == "350.00" and mine["claimed"] == "100.00"  # 100 waiting for Alice, 250 still unpaid
+    claim = for_person(await drain(harness), alice.telegram_id)
+    assert len(claim) == 1 and "₹100" in claim[0]["text"]
+    assert [b["data"].split(":")[0] for b in claim[0]["buttons"][0]] == ["recvfrom", "notyetfrom"]  # she confirms
+
+    await alice.ok("settle_with", person_id=bob.user_id, action="received")
+    after = (await bob.ok("my_dues"))["data"]["dues"]["owe"][0]
+    assert after["total"] == "250.00" and after["claimed"] == "0"
+    rest = await bob.ok("pay_friend", friend="Alice")  # no amount = everything left
+    assert "all square" in rest["text"]
+    # Bob's own expenses hold his full shares (50 + 300), counted once even though a bill was paid in two parts
+    async with session_scope() as s:
+        total = (await s.execute(select(func.sum(Expense.amount)).where(Expense.user_id == bob.user_id, Expense.voided_at.is_(None)))).scalar_one()
+    assert total == 350
+
+
+async def test_not_yet_on_a_part_payment_puts_only_that_part_back(harness, alice, bob):
+    await befriend(alice, bob, "Bob")
+    await befriend(bob, alice, "Alice")
+    await alice.ok("split_expense", amount=600, description="pizza", with_friends=["Bob"], split="equal")  # Bob owes 300
+    await bob.ok("pay_friend", friend="Alice", amount=100)
+    await alice.ok("settle_with", person_id=bob.user_id, action="notyet")
+    due = (await bob.ok("my_dues"))["data"]["dues"]["owe"][0]
+    assert due["total"] == "300.00" and due["claimed"] == "0"
+    async with session_scope() as s:
+        total = (await s.execute(select(func.coalesce(func.sum(Expense.amount), 0)).where(Expense.user_id == bob.user_id, Expense.voided_at.is_(None)))).scalar_one()
+    assert total == 0  # nothing was really paid, so nothing is in his expenses yet
+
+
+async def test_opposite_debts_left_over_are_netted_when_dues_open(harness, alice, bob):
+    await befriend(alice, bob, "Bob")
+    await befriend(bob, alice, "Alice")
+    await alice.ok("split_expense", amount=100, description="lunch", with_friends=["Bob"], split="equal")  # Bob owes 50
+    await bob.ok("pay_friend", friend="Alice")  # Bob says he paid
+    await bob.ok("split_expense", amount=100, description="dinner", with_friends=["Alice"], split="equal")  # Alice owes 50 (paid debt is in flight)
+    await alice.ok("settle_with", person_id=bob.user_id, action="notyet")  # lunch is unpaid again: 50 each way
+    assert "all clear" in (await alice.ok("my_dues"))["text"].lower()
+    assert "all clear" in (await bob.ok("my_dues"))["text"].lower()
+
+
 # ------------------------------------------------------------------ paying from the dues screen
 async def test_dues_screen_pays_a_person_in_one_tap(harness, alice, bob):
     await befriend(alice, bob, "Bob")

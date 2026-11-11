@@ -7,7 +7,7 @@ PRIVATE_TOOLS = [
     "set_budget", "get_budgets", "remove_budget",
     "get_expenses", "spending_summary", "monthly_trend", "daily_breakdown",
     "add_friend", "remove_friend", "list_friends",
-    "split_expense", "split_bills", "my_dues", "cancel_split",
+    "split_expense", "split_bills", "my_dues", "pay_friend", "cancel_split",
     "create_group",
 ]
 
