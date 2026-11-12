@@ -15,6 +15,7 @@ There are **no bank or cash accounts**: "spent 300 on ice cream" simply adds ₹
 | 📄 **Statement import** | Send a bank-statement PDF: spending rows become expenses after you confirm (credits and ATM withdrawals are skipped). |
 | 👥 **Friends** | "add friend Surya 123456789" (nickname + Telegram id), or `/invite` for a link they just tap. |
 | 💸 **Split a bill** | "dinner 3000, split equally with Surya, Ravi and Anil". Everyone is told what they owe. |
+| 💳 **Dues** | `/dues`: one total per person (not one line per bill), with **✅ I paid** / **✅ Received** buttons. What two friends owe each other cancels out automatically. Pay only part: "I paid Surya 300". |
 | 🧳 **Group chats** | Add the bot to a Telegram group: it sets itself up. Anyone mentions it to add expenses, then "split the bill" posts who owes what and DMs each person their bill. |
 
 ### Splitting a bill
@@ -26,6 +27,39 @@ There are **no bank or cash accounts**: "spent 300 on ice cream" simply adds ₹
    The person owed gets *"Surya says he paid ₹750. [✅ Received] [✖ Not yet]"*.
    **Received** settles it; **Not yet** puts it back on his list and removes the expense again.
 5. Unpaid shares are re-sent every 48 hours (`REMINDER_EVERY_HOURS`). `/dues` shows who owes whom.
+
+**Splitting something you just logged.** "I paid 500 for petrol", then "split it with Surya": the plain ₹500 expense is replaced by the
+split (your ₹250 share), so the petrol is not counted twice. This only happens for the same amount, logged within the last hour.
+
+### Dues, paying and netting
+- **One total per person.** `/dues` shows *"You owe Surya ₹350"*, not a line per tea or pizza. Under it: **✅ I paid Surya ₹350**.
+  For money owed to you that was marked paid: **✅ Received from Surya ₹350** and **✖ Not yet**. The message edits in place.
+- **Opposite debts cancel.** If Surya owes you ₹50 and you owe him ₹50, both are settled automatically and both of you get a
+  *"🔁 netted off"* message. Both people's own shares stay in their expenses. Netting runs when a new split is made and again whenever
+  `/dues` is opened. Debts already marked "paid" are in flight and left alone.
+- **Pay part of it.** *"I paid Surya 300"* takes exactly ₹300 off, oldest bill first (a bigger bill is cut in two). The rest stays due,
+  and Surya is asked to confirm **Received** or **Not yet**. *"Not yet"* puts back only that part. No amount (*"paid Ravi back"*) means everything.
+- A netted split can no longer be cancelled with the **Cancel split** button.
+
+## Commands
+Type `/` in Telegram to see them. There is no permanent keyboard under the text box.
+
+| Private chat | |
+|---|---|
+| `/summary` | Spending summary with ◀ ▶ month buttons |
+| `/history` | Recent expenses (`/recent` works too) |
+| `/budgets` | Budget progress |
+| `/daily` · `/trend` | Day-by-day and month-by-month spending |
+| `/friends` · `/invite` | Your friends; your invite link |
+| `/dues` | Who owes whom, with the pay buttons |
+| `/undo` · `/help` | Undo the last expense; what you can say |
+
+| Group chat | |
+|---|---|
+| `/settle` | Settle up the group (asks first) |
+| `/people` | Who the bot knows in this group |
+| `/summary` | Who paid what and who is owed (`/group` works too) |
+| `/help` | How to use the bot here |
 
 ### Several bills, different payers (a party night)
 *"I paid 2500 for food, Surya paid 600 for ice cream and Komal paid 3500 for the bar. Who pays whom?"*
@@ -88,7 +122,7 @@ flowchart LR
     U["👤 Telegram<br/>private chat or group"] <--> BOT
     subgraph BOTSVC["Telegram bot (app/)"]
         BOT["Handlers · buttons"] -->|"free text"| AG["LangGraph agent<br/>agent → tools → respond"]
-        AG --> LLM["☁️ Gemini / OpenAI /<br/>Anthropic / Groq"]
+        AG --> LLM["☁️ CodeVector gateway<br/>(OpenAI-compatible)"]
         BOT -->|"buttons, /commands, PDF"| CLI
         AG --> CLI["MCP client<br/>tokens + HTTP"]
         OUT["Outbox deliverer"]
@@ -111,7 +145,7 @@ flowchart LR
 | `mcp_server/auth/` | RS256 JWT tokens, JWKS, `/auth/token`, `/auth/session`, `/auth/revoke` |
 | `mcp_server/db/`, `migrations/` | SQLAlchemy models and Alembic migrations |
 | `app/mcp_client/` | The bot's only way to the data: token manager + MCP calls |
-| `app/agent/` | LangGraph graph, runner (pause/resume), prompt, LLM factory, statement parser |
+| `app/agent/` | LangGraph graph, runner (pause/resume), prompt, tool lists per chat type, LLM factory (CodeVector), statement parser |
 | `app/bot/` | Telegram: private chat, group chat, payment buttons, statement upload, outbox delivery |
 
 ### How a message flows
@@ -134,8 +168,10 @@ a database driver).
 ## Run
 
 1. Telegram: @BotFather → `/newbot` → copy the token (the **whole** token, `123456789:AAE...`). Your id: @userinfobot.
-2. `cp .env.example .env` and fill `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`, `ALLOWED_TELEGRAM_IDS`, and `MCP_BOT_CLIENT_SECRET`
+2. `cp .env.example .env` and fill `TELEGRAM_BOT_TOKEN`, `CODEVECTOR_API_KEY`, `ALLOWED_TELEGRAM_IDS`, and `MCP_BOT_CLIENT_SECRET`
    (a long random string both services share: `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
+   `CODEVECTOR_MODEL` and `CODEVECTOR_BASE_URL` have working defaults. docker-compose passes these to the bot container, and `compose up`
+   stops with a message if `CODEVECTOR_API_KEY` or `MCP_BOT_CLIENT_SECRET` is missing.
 3. **Docker (recommended):** `docker compose up --build` starts four containers: `mcp` (:8001), `bot` (:8000) and a Postgres for each.
    The database is **new** (`expense_mcp`, volume `pgdata_mcp`; the bot's `expense_bot`, volume `pgdata_bot`); the data of the earlier
    versions (volumes `pgdata`, `pgdata_expense`) is untouched.
@@ -156,9 +192,10 @@ scratch databases, then `pytest`. They run the real server in-process and talk t
 ## Limits
 - Friends must press Start before they can be messaged.
 - A tool call can't depend on another tool's result in the same message (the AI picks all tools up front).
-- Free LLM tiers are rate limited per minute; the bot says so instead of hanging.
+- The LLM gateway can be rate limited; the bot says so instead of hanging. One message is cut off after 60 seconds.
 - Reminders run inside the MCP server: run a single instance of it (a second one would send them twice).
 - Outside AI apps need a service credential from the operator for now; "Sign in with Telegram" (OAuth) is the next step, see [docs/MCP.md](docs/MCP.md#8-not-done-yet-sign-in-for-people-outside-telegram).
+- Debts already marked "paid" are not netted, and the money owed to you can only be confirmed after the other person marks it paid.
 - The `.pptx` files in `docs/` still describe the earlier cash/bank version.
 
 ## More documentation

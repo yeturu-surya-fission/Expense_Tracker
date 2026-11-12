@@ -63,9 +63,9 @@ services:
       TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
       PUBLIC_URL: ${PUBLIC_URL:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-change-me}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
-      LLM_MODEL: ${LLM_MODEL:-}
+      CODEVECTOR_API_KEY: ${CODEVECTOR_API_KEY:?set CODEVECTOR_API_KEY in .env}
+      CODEVECTOR_MODEL: ${CODEVECTOR_MODEL:-dev-model-alpha}
+      CODEVECTOR_BASE_URL: ${CODEVECTOR_BASE_URL:-https://coding-gateway.fissionlabs.com/gateway/openai/v1}
       TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
       MCP_SERVER_URL: http://mcp:8001/mcp
       MCP_BOT_CLIENT_ID: telegram-bot

@@ -103,13 +103,15 @@ Every user tool also accepts three optional protocol arguments (AI clients shoul
 | `add_friend`, `remove_friend`, `list_friends` | private | write / read | the friend circle |
 | `split_expense` | private | write | split one bill with friends (asks how) |
 | `split_bills` | private, group | write | several bills by different payers, netted to the fewest payments |
-| `my_dues`, `debt_action` | private | read / write | who owes whom; **I paid / Received / Not yet** |
+| `my_dues`, `debt_action` | private | read / write | who owes whom (one total per person; opposite debts are netted first); **I paid / Received / Not yet** for one bill |
+| `settle_with` | private | write | the dues buttons, one per **person**: `pay` (everything I owe them), `received`, `notyet` |
+| `pay_friend` | private | write | "I paid Surya 300": takes that amount off what the user owes that friend (all of it when no amount); the friend confirms |
 | `cancel_split` | private, group | write | cancel a split nobody has paid yet |
 | `create_group` | private, group | read | how to set up a trip group |
 | `add_group_expense`, `group_summary`, `settle_group` | group | write / read | the group's expenses and settle-up (asks to confirm) |
 | `join_group_via_start` | private | write | a person pressed a group's "Start the bot" button |
 | `statement_read_pdf`, `statement_preview`, `statement_apply`, `statement_cancel`, `statement_undo` | private | read / write | bank-statement import (debits only, with a confirmation step) |
-| `ui_view`, `last_expense` | private | read | screens for a chat client's menu and buttons |
+| `ui_view`, `last_expense` | private | read | screens for a chat client's commands and buttons (summary, history, budgets, friends, dues, daily, trend, invite) |
 | `agent_context` | private, group | read | what an AI agent should know before choosing tools |
 | `respond_to_user` | private, group | read | fixed greeting / help / refusal wording |
 
@@ -139,7 +141,7 @@ Payment reminders are produced by a background job inside the server (every 30 m
 
 ```bash
 # docker (both services, each with its own database)
-cp .env.example .env     # fill MCP_BOT_CLIENT_SECRET, TELEGRAM_BOT_TOKEN, LLM_API_KEY
+cp .env.example .env     # fill MCP_BOT_CLIENT_SECRET, TELEGRAM_BOT_TOKEN, CODEVECTOR_API_KEY
 docker compose up --build
 
 # locally, server only

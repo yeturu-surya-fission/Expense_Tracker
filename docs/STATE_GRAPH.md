@@ -77,7 +77,7 @@ graph TD;
 ```mermaid
 flowchart LR
     A["agent node"] --> CT{"chat type"}
-    CT -->|"private chat"| PT["18 tools<br/>expenses · budgets · reports<br/>friends · split_expense · split_bills<br/>dues · cancel_split · how to set up a group"]
+    CT -->|"private chat"| PT["19 tools<br/>expenses · budgets · reports<br/>friends · split_expense · split_bills<br/>dues · pay_friend · cancel_split · how to set up a group"]
     CT -->|"group chat"| GT["6 tools<br/>add_group_expense · split_bills<br/>group_summary · settle_group<br/>cancel_split · respond_to_user"]
     PT --> TN["tools node<br/>rejects anything outside its set"]
     GT --> TN
@@ -211,7 +211,7 @@ stateDiagram-v2
 | 5 | Greeting, off-topic, "need more info" | agent → tools (`respond_to_user`, fixed wording) → respond → END | 1 |
 | 6 | The AI breaks the rules with plain text | agent → END (the fixed refusal is sent) | 1 |
 | 7 | You cancel or change topic while a question waits | tools resumes with "cancel" → respond → END, then your new message starts at START | 0 + a new run |
-| 8 | Menu buttons, commands, **I paid / Received** taps, group `/group` and `/settle` | never enter the graph: the bot calls the MCP server directly | 0 |
+| 8 | Commands, **I paid / Received / Not yet** taps, group `/summary`, `/people` and `/settle` | never enter the graph: the bot calls the MCP server directly | 0 |
 | 9 | Group chat message that doesn't mention the bot | ignored before the graph | 0 |
 
 A tool that keeps failing is stopped by a 40-step safety limit, and the user gets a friendly error.

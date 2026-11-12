@@ -16,7 +16,7 @@ Contents: [1. Message routing](#1-message-routing) · [2. Recording an expense](
 
 ## 1. Message routing
 
-Everything you send is routed first. Menu buttons and commands never touch the LLM, which keeps them instant.
+Everything you send is routed first. Commands and buttons never touch the LLM, which keeps them instant.
 
 ```mermaid
 flowchart TD
@@ -25,17 +25,17 @@ flowchart TD
     WHERE -->|"private chat"| PALLOW{"allowed? (the MCP server decides when<br/>the bot asks for a session: allow-list, a friend<br/>of a listed person, or a member of a group)"}
     PALLOW -->|no| DENY["🔒 private bot"]
     PALLOW -->|yes| PKIND{"what is it?"}
-    PKIND -->|"menu button / /command"| DIRECT["ask the MCP server directly<br/>(no LLM, instant)"]
+    PKIND -->|"/command"| DIRECT["ask the MCP server directly<br/>(no LLM, instant)"]
     PKIND -->|"PDF file"| PDF["statement import (flow 8)"]
     PKIND -->|"text"| LEN{"over 1000 chars?"}
     LEN -->|yes| TOOLONG["✂️ too long"]
     LEN -->|no| AGENT["AgentRunner → LangGraph<br/>(private tools)"]
-    PKIND -->|"button tap"| CB["route by the button:<br/>answer a question · I paid · Received · Undo · month ◀ ▶"]
+    PKIND -->|"button tap"| CB["route by the button:<br/>answer a question · I paid · Received · Not yet · Undo · month ◀ ▶"]
 
     WHERE -->|"group chat"| GKIND{"what is it?"}
     GKIND -->|"bot added / removed"| SETUP["set up the group (flow 6)<br/>or leave if a stranger added it"]
     GKIND -->|"someone joined / left / renamed / upgraded"| MEMB["update members and name (flow 6)"]
-    GKIND -->|"/group, /settle"| GCMD["answer without the AI"]
+    GKIND -->|"/settle, /people, /summary"| GCMD["answer without the AI"]
     GKIND -->|"ordinary message"| ADDR{"@mention, or a reply<br/>to the bot?"}
     ADDR -->|no| IGN["ignored: no reply, no AI call"]
     ADDR -->|yes| GAGENT["AgentRunner → LangGraph<br/>(group tools; the speaker becomes a member)"]
@@ -114,6 +114,10 @@ The key point: **a question is a result, not a half-finished action.** The serve
 nothing exists; their answer arrives as a second call of the same tool, and the write happens exactly once (repeat calls carry the same
 idempotency key and return the first result).
 
+**Splitting something you just logged.** "I paid 500 for petrol", then "split it with Surya": `split_expense` voids the plain expense
+(same amount, the user is the payer, it is their latest personal expense, logged within the last hour) and saves only the user's own
+share, so the petrol is not counted twice. The reply says so (*♻️ ... is replaced by this split*).
+
 Other questions the bot may ask: *one-off or create a group?* (4 or more people), *equally, always equally in this group, or amounts?* (group
 expenses), *settle up now?* (before settling a group). A typed answer works too ("equally"), and an unrelated reply simply cancels the
 question and handles your new message.
@@ -135,6 +139,31 @@ stateDiagram-v2
 - If a person owes **two people** (see flow 5), their whole share is saved **once**, on their first payment. If one of those
   payments is rejected but the other still stands, the expense stays; it is removed only when none stands.
 - Tapping twice, or the wrong person tapping, is refused safely.
+
+### Dues, netting and partial payments
+
+`/dues` shows **one total per person**, not one line per bill, plus one button row per person. Everything below is the server's
+`debts` module; the bot only draws the buttons (`payto:`, `recvfrom:`, `notyetfrom:` + the other person's id) and edits the message in place.
+
+```mermaid
+flowchart TD
+    NEW["a new split or settle-up creates debts"] --> NET
+    OPEN["/dues is opened"] --> NET
+    NET{"do the two people owe each other<br/>unpaid money in BOTH directions?"}
+    NET -->|no| KEEP["nothing to cancel"]
+    NET -->|yes| CUT["cancel the smaller total, oldest bill first<br/>a fully cancelled debt = settled<br/>(the debtor's share goes into their expenses)<br/>a partly cancelled debt = a smaller amount"]
+    CUT --> TELL["both people get '🔁 netted off';<br/>old bill messages disappear or are re-sent smaller"]
+```
+
+- **Only unpaid (`pending`) debts are netted.** A debt already marked paid is in flight and is left alone.
+- **Pay everything to one person:** the **✅ I paid Surya ₹350** button (`settle_with`, action `pay`) marks all their bills paid, saves the
+  shares as the payer's expenses and sends Surya **one** message with **Received / Not yet** for the total.
+- **Pay part of it:** *"I paid Surya 300"* is the `pay_friend` tool. It takes exactly that amount off, oldest bill first. A bill bigger than
+  what is left is **cut in two**: the paid part (a new `debt` row, status `claimed`) waits for Surya, the remainder stays `pending`.
+  Paying more than is owed is refused. The reply shows what is still to pay.
+- **Confirm:** Surya taps **Received** (all the `claimed` bills from that person become `settled`) or **Not yet** (only the claimed
+  parts go back to `pending`, and their expenses are voided unless another paid part of the same bill still stands).
+- A share is recorded in the payer's expenses **once**, even if its bill was paid in two parts.
 
 ## 5. Several bills, different payers (a party night)
 
@@ -192,7 +221,7 @@ flowchart TD
 can't be seen. Before a split the bot compares what it knows with Telegram's member count and warns: *"I only know 3 of the 5 people, the
 others should mention me once."*
 
-**Access:** everyone in the group can use the bot there, by **@mentioning it** (or replying to it, or `/group`, `/settle`). Ordinary chatter is
+**Access:** everyone in the group can use the bot there, by **@mentioning it** (or replying to it, or `/summary`, `/people`, `/settle`). Ordinary chatter is
 never read or answered. Group members can also use the bot privately (for their own bills), but cannot add it to other groups.
 
 ## 7. Group chats: split the bill
@@ -315,7 +344,7 @@ Everything is stored with a full timestamp and category; months and days are com
 ```mermaid
 flowchart TD
     Q(["question"]) --> HOW{"how asked?"}
-    HOW -->|"menu / buttons"| BTN["no LLM"]
+    HOW -->|"commands / buttons"| BTN["no LLM"]
     HOW -->|"free text"| LLM["LLM maps the phrase to a tool + period<br/>(it knows today's date)"]
     LLM --> MAP{"phrase"}
     MAP -->|"'in september'"| P1["spending_summary(period = 2026-09)"]

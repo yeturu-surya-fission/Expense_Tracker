@@ -40,7 +40,7 @@ flowchart LR
         OBX["Outbox + reminders"]
     end
 
-    LLM["☁️ Gemini / OpenAI /<br/>Anthropic / Groq"]
+    LLM["☁️ CodeVector gateway<br/>(OpenAI-compatible)"]
     DB1[("Postgres: expense data<br/>(owned by the MCP server)")]
     DB2[("Postgres: agent memory<br/>(owned by the bot)")]
 
@@ -89,7 +89,7 @@ flowchart TB
 
 | Folder | Responsibility | Key files |
 |---|---|---|
-| `app/bot/` | Telegram: menu, buttons, typing indicator, group events, PDF upload, **delivering the messages the server queues** | `base.py`, `private.py`, `group.py`, `dues_flow.py`, `statement_flow.py`, `handlers.py`, `delivery.py`, `keyboards.py` |
+| `app/bot/` | Telegram: commands, buttons, typing indicator, group events, PDF upload, **delivering the messages the server queues** | `base.py`, `private.py`, `group.py`, `dues_flow.py`, `statement_flow.py`, `handlers.py`, `delivery.py`, `keyboards.py` |
 | `app/agent/` | The brain: LangGraph graph, per-person runner (pause/resume), system prompt, tool sets per chat type, LLM factory, statement parser | `graph.py`, `runner.py`, `prompts.py`, `toolsets.py`, `llm.py`, `statement_parser.py` |
 | `app/mcp_client/` | The only way to the data: asks the server for tokens, calls tools, turns tool definitions into what the LLM sees | `gateway.py`, `schema.py`, `types.py` |
 | `mcp_server/auth/` | Issues and verifies tokens, `/auth/token`, `/auth/session`, `/auth/revoke`, JWKS | `tokens.py`, `verifier.py`, `routes.py`, `keys.py` |
@@ -106,8 +106,8 @@ shows the LLM the matching tools):
 | | Private chat | Group chat |
 |---|---|---|
 | Who may use it | the allow-list, friends of a listed person, and anyone in a group the owner added the bot to | **anyone in the group** |
-| When the bot reacts | every message, menu button, command | **only** an @mention, a reply to the bot, or a `/command` |
-| Tools the AI may call | own expenses, budgets, reports, friends, splits, `split_bills`, dues, cancel split, how to set up a group | `add_group_expense`, `split_bills`, `group_summary`, `settle_group`, `cancel_split` |
+| When the bot reacts | every message and command | **only** an @mention, a reply to the bot, or a `/command` |
+| Tools the AI may call | own expenses, budgets, reports, friends, splits, `split_bills`, dues, `pay_friend`, cancel split, how to set up a group | `add_group_expense`, `split_bills`, `group_summary`, `settle_group`, `cancel_split` |
 | Personal money | yes | never (the server refuses `add_expenses` and friends in a group session) |
 | Setup | `/start` | **automatic** when an allowed person adds the bot to a group |
 
@@ -306,6 +306,9 @@ and paused questions).
 | Several bills, different payers (a party) | several `shared_expenses` with one `bundle_id`, shares, and only the **netted** `debts` | people who owe nothing now; a debtor when they tap **I paid** (once, even if they owe two people) |
 | Group chat expense | a `shared_expense` + shares under the group | at settle-up: people who owe nothing now; a debtor on **I paid** |
 | Statement PDF | `expenses` rows (debits only) | on confirmation |
+| Two people owe each other | the smaller total is cancelled (oldest bills first): a fully cancelled `debt` becomes `settled`, a partly cancelled one just gets a smaller amount | the debtor's share of a settled-by-netting debt, immediately |
+| Paying part of a debt | the bill is cut in two `debts` rows: the paid part (`claimed`) and the remainder (`pending`) | the debtor's share, once, on the first part paid |
+| Splitting a just-logged expense | the plain `expense` is voided (same amount, within an hour) and replaced by the split | the payer's own share, immediately |
 
 Shares are exact to the paisa, and the odd paise rotate between people so nobody drifts ahead.
 
@@ -333,7 +336,7 @@ signing key or the database URL of the expense data).
 |---|---|---|
 | `MCP_BOT_CLIENT_SECRET` | both | the secret the bot uses to get a service token |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_MODE`, `PUBLIC_URL` | bot | Telegram; `polling` for dev, `webhook` for production |
-| `LLM_API_KEY` / `LLM_PROVIDER` / `LLM_MODEL` | bot | the brain; provider auto-detected from the key |
+| `CODEVECTOR_API_KEY` / `CODEVECTOR_MODEL` / `CODEVECTOR_BASE_URL` | bot | the brain: an OpenAI-compatible gateway (model and URL have defaults; compose requires the key) |
 | `MCP_SERVER_URL` | bot | where the MCP server is |
 | `BOT_DATABASE_URL` | bot | conversation memory only |
 | `MCP_DATABASE_URL`, `MCP_ENV`, `MCP_PUBLIC_URL`, `MCP_JWT_PRIVATE_KEY` | MCP | the expense database; signing key (required in production) |
