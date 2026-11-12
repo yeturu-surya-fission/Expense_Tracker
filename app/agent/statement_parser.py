@@ -79,7 +79,7 @@ async def parse_pages(
     """`categories` and `today` come from the server (statement_read_pdf), so the allowed list lives in one place."""
     categories = list(dict.fromkeys([*categories, *(user_categories or [])]))
     system = SystemMessage(PROMPT.format(today=today, categories=", ".join(categories)))
-    structured = llm.with_structured_output(StatementChunk)
+    structured = llm.with_structured_output(StatementChunk, method="function_calling")
     sem = asyncio.Semaphore(CONCURRENCY)
 
     async def one(idx: int, text: str) -> list[dict]:

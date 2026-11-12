@@ -16,15 +16,11 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
     bot_username: str = ""  # filled in at startup from Telegram
 
-    # llm
-    llm_api_key: str = ""
-    llm_provider: str = "auto"
-    llm_model: str = ""
+    # codevector llm (OpenAI-compatible)
+    codevector_model: str = "dev-model-alpha"
+    codevector_api_key: str = ""
+    codevector_base_url: str = "https://coding-gateway.fissionlabs.com/gateway/openai/v1"
     llm_temperature: float = 0.0
-    google_api_key: str = ""
-    openai_api_key: str = ""
-    anthropic_api_key: str = ""
-    groq_api_key: str = ""
 
     # the MCP server: the ONLY way this process reaches expense data
     mcp_server_url: str = "http://localhost:8001/mcp"
