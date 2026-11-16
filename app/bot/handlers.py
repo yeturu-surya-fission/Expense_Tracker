@@ -10,12 +10,13 @@ from app.bot.base import keep_typing
 from app.bot.dues_flow import DueMixin
 from app.bot.group import GroupMixin
 from app.bot.private import PrivateMixin
+from app.bot.reimburse_flow import ReimburseMixin
 from app.bot.statement_flow import StatementMixin
 
 log = logging.getLogger(__name__)
 
 
-class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin):
+class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin, ReimburseMixin):
     async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         q = update.callback_query
         await q.answer()  # stops the button's loading spinner immediately
@@ -43,6 +44,9 @@ class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin):
         elif kind in ("payto", "recvfrom", "notyetfrom") and arg.isdigit():
             action = {"payto": "pay", "recvfrom": "received", "notyetfrom": "notyet"}[kind]
             await self._settle_with(q, tg, action, int(arg))
+
+        elif kind == "rb":
+            await self._reimburse(q, tg, arg)
 
         elif kind == "gsettle":
             await self._settle_button(q, tg, context.bot)

@@ -12,6 +12,7 @@ from mcp_server import tools as _tools  # noqa: F401  (importing registers every
 from mcp_server.auth.routes import register_auth_routes
 from mcp_server.auth.verifier import JwtVerifier
 from mcp_server.config import settings
+from mcp_server.reimbursement.webhook import register_reimbursement_routes
 from mcp_server.db.session import engine, init_db
 from mcp_server.tools.registry import SPECS, register_all
 
@@ -54,6 +55,7 @@ def create_mcp() -> MCPServer:
     )
     register_all(mcp)
     register_auth_routes(mcp)
+    register_reimbursement_routes(mcp)
     return mcp
 
 

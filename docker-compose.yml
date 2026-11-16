@@ -1,6 +1,7 @@
-# Two services that only talk over HTTP:
-#   mcp  - the MCP server: tools, expense database, authentication  (port 8001)
-#   bot  - the Telegram bot: Telegram + the AI agent; reaches expense data ONLY through the MCP server (port 8000)
+# Three services that only talk over HTTP:
+#   mcp     - the MCP server: tools, expense database, authentication  (port 8001)
+#   bot     - the Telegram bot: Telegram + the AI agent; reaches expense data ONLY through the MCP server (port 8000)
+#   finance - the Finance Agent: a company's reimbursement policy and claims, reached over A2A; has its own manager bot (port 8002)
 # Each has its own database. Secrets come from your .env file (never baked into images); each service gets only what it needs.
 services:
   mcp-db:
@@ -28,6 +29,18 @@ services:
       interval: 3s
       retries: 20
 
+  finance-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: expense
+      POSTGRES_PASSWORD: ${FINANCE_DB_PASSWORD:-expense}
+      POSTGRES_DB: expense_finance
+    volumes: [pgdata_finance:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U expense -d expense_finance"]
+      interval: 3s
+      retries: 20
+
   mcp:
     build:
       context: .
@@ -45,6 +58,9 @@ services:
       MCP_BUDGET_ALERT_THRESHOLDS: ${BUDGET_ALERT_THRESHOLDS:-50,80,100}
       MCP_REMINDER_EVERY_HOURS: ${REMINDER_EVERY_HOURS:-48}
       MCP_ASK_GROUP_MIN_PEOPLE: ${ASK_GROUP_MIN_PEOPLE:-4}
+      # work reimbursements: where the Finance Agent is, and the secret that signs the decisions it sends back
+      MCP_FINANCE_AGENT_URL: http://finance:8002
+      MCP_FINANCE_WEBHOOK_SECRET: ${FINANCE_WEBHOOK_SECRET:?set FINANCE_WEBHOOK_SECRET in .env (a long random string shared with the Finance Agent)}
     ports: ["8001:8001"]
     depends_on:
       mcp-db: { condition: service_healthy }
@@ -77,6 +93,33 @@ services:
       mcp: { condition: service_healthy }
     restart: unless-stopped
 
+  finance:
+    build:
+      context: .
+      dockerfile: Dockerfile.finance
+    environment:
+      FINANCE_DATABASE_URL: postgresql+asyncpg://expense:${FINANCE_DB_PASSWORD:-expense}@finance-db:5432/expense_finance
+      FINANCE_PUBLIC_URL: http://finance:8002   # must equal MCP_FINANCE_AGENT_URL above (tokens are addressed to it)
+      FINANCE_TRUSTED_ISSUER: ${MCP_PUBLIC_URL:-http://mcp:8001}   # the expense tracker's issuer: tokens signed by anyone else are refused
+      FINANCE_TRUSTED_JWKS_URL: http://mcp:8001/.well-known/jwks.json
+      FINANCE_TRACKER_WEBHOOK_URL: http://mcp:8001/a2a/webhook
+      FINANCE_WEBHOOK_SECRET: ${FINANCE_WEBHOOK_SECRET:?set FINANCE_WEBHOOK_SECRET in .env}
+      FINANCE_TELEGRAM_BOT_TOKEN: ${FINANCE_TELEGRAM_BOT_TOKEN:-}
+      FINANCE_ALLOWED_MANAGER_IDS: ${FINANCE_ALLOWED_MANAGER_IDS:-}
+      CODEVECTOR_API_KEY: ${CODEVECTOR_API_KEY:-}
+      CODEVECTOR_MODEL: ${CODEVECTOR_MODEL:-dev-model-alpha}
+      CODEVECTOR_BASE_URL: ${CODEVECTOR_BASE_URL:-https://coding-gateway.fissionlabs.com/gateway/openai/v1}
+      CURRENCY_SYMBOL: ${CURRENCY_SYMBOL:-₹}
+    ports: ["8002:8002"]
+    depends_on:
+      finance-db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8002/healthz', timeout=3).status == 200 else 1)"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
 volumes:
   pgdata_mcp:
   pgdata_bot:
+  pgdata_finance:

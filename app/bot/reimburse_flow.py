@@ -1,0 +1,44 @@
+"""
+/reimburse and its buttons: the work-reimbursement home screen. Work expenses live apart from the person's own spending, and
+claims are decided by the company's finance agent; this file only shows screens and forwards taps to MCP tools.
+"""
+from telegram import User as TgUser
+
+from app.bot import keyboards as kb
+from app.bot.base import BotBase
+
+ADD_HINT = (
+    "➕ Just tell me, in your own words:\n"
+    "• “work expense: cab 450 to the client office”\n"
+    "• “claim my Pune hotel, 15000 for 2 nights”\n"
+    "• or, for something you already logged: “that cab was for work”"
+)
+ASK_HINT = (
+    "❓ Ask me anything about your company's reimbursement policy, for example:\n"
+    "• “will I get a refund on a hotel room?”\n"
+    "• “what's the meal limit?”\n"
+    "• “can I claim a gym pass?”\n"
+    "I'll check the real policy, and if it doesn't say, I can ask your manager."
+)
+
+
+class ReimburseMixin(BotBase):
+    async def _reimburse_home(self, tg: TgUser, message) -> None:
+        res = await self.call(self.private(tg), "reimburse_view")
+        await message.reply_text(res.message, reply_markup=kb.reimburse_keyboard(res.data))
+
+    async def _reimburse(self, q, tg: TgUser, arg: str) -> None:
+        ident = self.private(tg)
+        if arg == "add":
+            await q.message.reply_text(ADD_HINT)
+        elif arg == "ask":
+            await q.message.reply_text(ASK_HINT)
+        elif arg == "claims":
+            await q.message.reply_text((await self.call(ident, "my_claims")).message)
+        elif arg == "send":
+            res = await self.call(ident, "submit_claim")  # the server asks for confirmation first
+            await q.message.reply_text(res.message, reply_markup=kb.send_claim_keyboard() if res.status == "input_required" else None)
+        elif arg == "yes":
+            await q.edit_message_reply_markup(reply_markup=None)  # one-shot
+            res = await self.call(ident, "submit_claim", answers={"confirm": "yes"}, idempotency_key=f"claim:{tg.id}:{q.message.message_id}")
+            await q.message.reply_text(res.message.replace("❌ ", "ℹ️ ", 1))

@@ -15,6 +15,15 @@ os.environ["MCP_ALLOWED_TELEGRAM_IDS"] = ""
 os.environ.update({"MCP_CURRENCY_SYMBOL": "₹", "MCP_TIMEZONE": "Asia/Kolkata", "MCP_BUDGET_ALERT_THRESHOLDS": "50,80,100",
                    "MCP_REMINDER_EVERY_HOURS": "48", "MCP_ASK_GROUP_MIN_PEOPLE": "4"})  # whatever the developer's own .env says
 
+# the reimbursement tests run the tracker and the Finance Agent together, each trusting the other
+os.environ["MCP_FINANCE_AGENT_URL"] = "http://finance.test"
+os.environ["MCP_FINANCE_WEBHOOK_SECRET"] = "test-webhook-secret"
+os.environ.setdefault("FINANCE_DATABASE_URL", os.environ.get("TEST_FINANCE_DATABASE_URL", "postgresql+asyncpg://expense:expense@localhost:5432/expense_finance_test"))
+os.environ.update({
+    "FINANCE_WEBHOOK_SECRET": "test-webhook-secret", "FINANCE_PUBLIC_URL": "http://finance.test", "FINANCE_TRUSTED_ISSUER": "http://testserver",
+    "FINANCE_TRACKER_WEBHOOK_URL": "http://testserver/a2a/webhook", "FINANCE_CODEVECTOR_API_KEY": "", "FINANCE_CURRENCY_SYMBOL": "₹", "FINANCE_ALLOWED_MANAGER_IDS": "",
+})
+
 import pytest  # noqa: E402
 
 from tests.harness import Harness  # noqa: E402

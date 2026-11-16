@@ -9,6 +9,9 @@ PRIVATE_TOOLS = [
     "add_friend", "remove_friend", "list_friends",
     "split_expense", "split_bills", "my_dues", "pay_friend", "cancel_split",
     "create_group",
+    # work reimbursements (kept apart from personal spending; the company's finance agent decides)
+    "join_company", "add_work_expense", "move_to_reimbursement", "list_work_expenses", "remove_work_expense",
+    "ask_policy", "ask_manager", "submit_claim", "claim_answer", "my_claims",
 ]
 
 # in a Telegram group chat: only the shared-group tools (personal money stays out of the group)

@@ -21,6 +21,7 @@ COMMANDS = [
     BotCommand("invite", "🔗 Invite link for a friend"),
     BotCommand("daily", "📅 Day-by-day spending"),
     BotCommand("trend", "📈 Month-by-month trend"),
+    BotCommand("reimburse", "🧾 Work reimbursements"),
     BotCommand("undo", "↩️ Undo last expense"),
     BotCommand("help", "❓ What can I say?"),
 ]
@@ -51,7 +52,7 @@ def build_telegram_app(runner: AgentRunner, llm, gateway: McpGateway) -> Applica
     # --- private chat
     app.add_handler(CommandHandler("start", h.start, filters=private))
     app.add_handler(CommandHandler("help", h.help, filters=private))
-    app.add_handler(CommandHandler(["summary", "history", "recent", "budgets", "friends", "dues", "invite", "daily", "trend", "undo"], h.on_command, filters=private))
+    app.add_handler(CommandHandler(["summary", "history", "recent", "budgets", "friends", "dues", "invite", "daily", "trend", "undo", "reimburse"], h.on_command, filters=private))
     app.add_handler(MessageHandler(private & filters.Document.ALL, h.on_document))
     app.add_handler(MessageHandler(private & filters.PHOTO, h.on_other_file))
     app.add_handler(MessageHandler(private & filters.TEXT & ~filters.COMMAND, h.on_text))

@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     bot_client_id: str = "telegram-bot"
     bot_client_secret: str = ""
 
+    # the Finance Agent (company reimbursements, over A2A). Its address must equal the Finance Agent's own FINANCE_PUBLIC_URL.
+    finance_agent_url: str = "http://finance:8002"
+    finance_webhook_secret: str = ""  # shared with the Finance Agent (FINANCE_WEBHOOK_SECRET); it signs the decisions it sends us
+    a2a_token_ttl_seconds: int = 120
+
     # abuse protection
     rate_limit_per_minute: int = 120  # per user (or per service client)
     max_request_bytes: int = 15 * 1024 * 1024  # a statement PDF travels base64 inside a request

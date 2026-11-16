@@ -326,3 +326,29 @@ async def test_dues_screen_has_pay_buttons_and_updates_in_place(make_handlers, g
     q, coro = tap(h, bot, kiran, FakeMessage(claim["text"], private_chat(kiran.id)), got[1])
     await coro
     assert "All settled" in q.edited[-1]["text"]
+
+
+# ------------------------------------------------------------------ work reimbursements
+async def test_reimburse_screen_and_buttons_before_joining_a_company(make_handlers):
+    h, bot = make_handlers(), FakeBot()
+    user, msg = private_msg(new_telegram_id(), "/reimburse")
+    await h.on_command(update(user, msg), context(bot))
+    shown = msg.sent[-1]
+    assert "haven't joined a company" in shown["text"] and "kept apart from your personal spending" in shown["text"]
+    assert [b[1] for b in buttons(shown["markup"])] == ["rb:add", "rb:claims", "rb:ask"]  # nothing to send yet
+
+    await h.call(h.private(user), "add_work_expense", items=[{"amount": 450, "category": "cab", "description": "cab to client"}])
+    again = FakeMessage("/reimburse", msg.chat, user)
+    await h.on_command(update(user, again), context(bot))
+    assert "rb:send" in [b[1] for b in buttons(again.sent[-1]["markup"])] and "₹450" in again.sent[-1]["text"]
+
+    shown_msg = FakeMessage("x", msg.chat)
+    for data, expect in (("rb:add", "work expense"), ("rb:ask", "policy"), ("rb:claims", "haven't sent any claims"), ("rb:send", "joined a company"), ("rb:yes", "joined a company")):
+        q, coro = tap(h, bot, user, shown_msg, data)
+        await coro
+        assert expect in shown_msg.sent[-1]["text"], data
+
+
+async def test_reimburse_is_in_the_command_menu():
+    from app.bot.app import COMMANDS
+    assert "reimburse" in [c.command for c in COMMANDS]

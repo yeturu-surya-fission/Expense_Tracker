@@ -63,11 +63,13 @@ class PrivateMixin(BotBase):
         elif action == "dues":
             res = await self.call(ident, "ui_view", view="dues")
             await message.reply_text(res.message, reply_markup=kb.dues_keyboard(res.data.get("dues")))
+        elif action == "reimburse":
+            await self._reimburse_home(tg, message)
         elif action in ("recent", "budgets", "friends", "invite"):
             await message.reply_text((await self.call(ident, "ui_view", view=action)).message)
 
     async def on_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """/summary /history /budgets /friends /dues /daily /trend /invite /undo"""
+        """/summary /history /budgets /friends /dues /daily /trend /invite /undo /reimburse"""
         if await self._guard(update):
             action = update.effective_message.text.split()[0].lstrip("/").split("@")[0].lower()
             action = "recent" if action == "history" else action

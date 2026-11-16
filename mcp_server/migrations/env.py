@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from mcp_server.config import settings
 from mcp_server.db.models import Base
+from mcp_server.reimbursement import models as _reimbursement_models  # noqa: F401  (registers its tables)
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())

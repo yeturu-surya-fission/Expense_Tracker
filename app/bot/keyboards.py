@@ -45,6 +45,23 @@ def dues_keyboard(dues: dict | None) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(rows) if rows else None
 
 
+def reimburse_keyboard(view: dict | None) -> InlineKeyboardMarkup:
+    """The /reimburse screen: add, send what is waiting, see claims, ask the policy."""
+    view = view or {}
+    rows = [[InlineKeyboardButton("➕ Add work expense", callback_data="rb:add")]]
+    if view.get("waiting"):
+        rows.append([InlineKeyboardButton(f"📤 Send claim ({view['waiting']})", callback_data="rb:send")])
+    rows.append([InlineKeyboardButton("📨 My claims", callback_data="rb:claims"), InlineKeyboardButton("❓ Ask the policy", callback_data="rb:ask")])
+    return InlineKeyboardMarkup(rows)
+
+
+def send_claim_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Yes, send", callback_data="rb:yes"),
+        InlineKeyboardButton("✖ Not now", callback_data="keep"),
+    ]])
+
+
 def undo_confirm_keyboard(expense_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Yes, undo it", callback_data=f"undo:{expense_id}"),

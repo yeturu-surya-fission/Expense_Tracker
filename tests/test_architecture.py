@@ -84,3 +84,38 @@ def test_each_service_depends_only_on_its_own_requirements():
     mcp, bot = packages("requirements-mcp.txt"), packages("requirements-bot.txt")
     assert "telegram" not in mcp and "langchain" not in mcp and "langgraph" not in mcp
     assert "sqlalchemy" not in bot and "asyncpg" not in bot and "pypdf" not in bot and "pyjwt" not in bot
+
+
+# ------------------------------------------------------------------ the Finance Agent is a third, separate service
+def test_the_finance_agent_shares_no_code_with_the_other_two():
+    for file, mods in imports_of("finance_agent").items():
+        assert not [m for m in mods if m.split(".")[0] in ("app", "mcp_server")], f"{file} imports the expense tracker's code"
+
+
+def test_the_expense_tracker_never_imports_the_finance_agents_code():
+    for folder in ("app", "mcp_server"):
+        for file, mods in imports_of(folder).items():
+            assert "finance_agent" not in top(mods), f"{file} imports the Finance Agent: they may only talk over A2A"
+
+
+def test_only_the_reimbursement_package_speaks_a2a_on_the_tracker_side():
+    for file, mods in imports_of("mcp_server").items():
+        if not file.startswith("mcp_server/reimbursement/"):
+            assert "a2a" not in top(mods), f"{file} imports the A2A SDK directly"
+    for file, mods in imports_of("app").items():
+        assert "a2a" not in top(mods), f"{file}: the bot never speaks A2A"
+
+
+def test_the_finance_agent_has_its_own_requirements_and_image():
+    text = (ROOT / "requirements-finance.txt").read_text(encoding="utf-8").lower()
+    assert "a2a-sdk" in text and "langchain" not in text and "langgraph" not in text
+    assert (ROOT / "Dockerfile.finance").exists()
+    assert "finance_agent" in (ROOT / "Dockerfile.finance").read_text(encoding="utf-8")
+    bot = (ROOT / "requirements-bot.txt").read_text(encoding="utf-8").lower()
+    assert "a2a" not in bot
+
+
+def test_the_finance_agent_loads_cleanly():
+    import importlib
+    for module in ("finance_agent.main", "finance_agent.manager.bot", "finance_agent.a2a.notify"):
+        importlib.import_module(module)

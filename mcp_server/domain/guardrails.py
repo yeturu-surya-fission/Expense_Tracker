@@ -5,7 +5,7 @@ must call `respond_to_user`, and the wording of those replies comes from the con
 
 SCOPE_MESSAGE = (
     "🙅 That's outside my job - I only handle your expenses:\n"
-    "spending, budgets, summaries, splitting bills with friends, trip groups and bank-statement PDFs.\n\n"
+    "spending, budgets, summaries, splitting bills with friends, trip groups, bank-statement PDFs and work reimbursements.\n\n"
     "Try: spent 200 on lunch"
 )
 
@@ -22,8 +22,9 @@ HELP = (
     "• add friend Surya 123456789  (or /invite to get a link)\n"
     "• dinner 3000, split equally with Surya and Ravi\n"
     "• /dues shows who owes whom\n\n"
+    "🧾 Work reimbursements: /reimburse. “work expense: cab 450 to the client”, “will I get a refund on a hotel room?”, “send my claim”.\n\n"
     "🧳 Trips: create a Telegram group, add your friends and add me. Anyone there can mention me ('@me I paid 1000 for petrol') and say '@me split the bill'.\n\n"
-    "Type / to see every command: /summary /dues /history /budgets /friends /invite /daily /trend /undo /help."
+    "Type / to see every command: /summary /dues /history /budgets /friends /invite /daily /trend /undo /reimburse /help."
 )
 
 MAX_CLARIFY_CHARS = 200

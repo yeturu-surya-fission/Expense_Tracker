@@ -16,6 +16,7 @@ There are **no bank or cash accounts**: "spent 300 on ice cream" simply adds ₹
 | 👥 **Friends** | "add friend Surya 123456789" (nickname + Telegram id), or `/invite` for a link they just tap. |
 | 💸 **Split a bill** | "dinner 3000, split equally with Surya, Ravi and Anil". Everyone is told what they owe. |
 | 💳 **Dues** | `/dues`: one total per person (not one line per bill), with **✅ I paid** / **✅ Received** buttons. What two friends owe each other cancels out automatically. Pay only part: "I paid Surya 300". |
+| 🧾 **Work reimbursements** | `/reimburse`: work expenses kept **apart** from your spending, "will I get a refund on this room?" answered from your company's real policy, claims checked by the company's **Finance Agent** (over A2A) and approved by your manager in Telegram. See [docs/REIMBURSEMENT.md](docs/REIMBURSEMENT.md). |
 | 🧳 **Group chats** | Add the bot to a Telegram group: it sets itself up. Anyone mentions it to add expenses, then "split the bill" posts who owes what and DMs each person their bill. |
 
 ### Splitting a bill
@@ -52,6 +53,7 @@ Type `/` in Telegram to see them. There is no permanent keyboard under the text 
 | `/daily` · `/trend` | Day-by-day and month-by-month spending |
 | `/friends` · `/invite` | Your friends; your invite link |
 | `/dues` | Who owes whom, with the pay buttons |
+| `/reimburse` | Work reimbursements: add, send a claim, see claims, ask the policy |
 | `/undo` · `/help` | Undo the last expense; what you can say |
 
 | Group chat | |
@@ -117,6 +119,9 @@ adds the bot to some other group, it leaves. Group members cannot add the bot to
 Two services that only talk over HTTP. The **MCP server** owns the tools, the logic, the database and the authentication; the **Telegram bot**
 owns Telegram and the AI, and can reach expense data **only** through MCP requests carrying a token the server issued.
 
+A **third, separate service, the Finance Agent** (`finance_agent/`), plays a company's finance team for work reimbursements. The MCP server talks to it
+over **A2A**; the two share no code and no database (a test enforces it). How it works: [docs/REIMBURSEMENT.md](docs/REIMBURSEMENT.md).
+
 ```mermaid
 flowchart LR
     U["👤 Telegram<br/>private chat or group"] <--> BOT
@@ -143,10 +148,12 @@ flowchart LR
 | `mcp_server/domain/` | **All the logic, no LLM, no Telegram.** `expenses`, `budgets`, `reports`/`views`, `friends`, `splits` (shares to the paisa), `groups` (settle-up), `debts` (pay / confirm lifecycle), `notices` + `outbox` (every message to other people), `statements` |
 | `mcp_server/tools/` | The MCP tools and the gate every call passes (scope, chat context, rate limit, idempotency, audit). Private and group chats see different tools |
 | `mcp_server/auth/` | RS256 JWT tokens, JWKS, `/auth/token`, `/auth/session`, `/auth/revoke` |
+| `mcp_server/reimbursement/` | Work expenses and claims, the A2A client to the Finance Agent, and the webhook that receives its decisions |
 | `mcp_server/db/`, `migrations/` | SQLAlchemy models and Alembic migrations |
 | `app/mcp_client/` | The bot's only way to the data: token manager + MCP calls |
 | `app/agent/` | LangGraph graph, runner (pause/resume), prompt, tool lists per chat type, LLM factory (CodeVector), statement parser |
-| `app/bot/` | Telegram: private chat, group chat, payment buttons, statement upload, outbox delivery |
+| `app/bot/` | Telegram: private chat, group chat, payment buttons, statement upload, `/reimburse`, outbox delivery |
+| `finance_agent/` | **The Finance Agent**, a separate service: company policy, policy Q&A, claim checks, the A2A endpoint, and the manager's own Telegram bot. File-by-file map in [finance_agent/README.md](finance_agent/README.md) |
 
 ### How a message flows
 `agent` asks the LLM which tools to call → `tools` runs them **one per step**, each as an MCP request made with a token for the person who is
@@ -163,7 +170,8 @@ a database driver).
 ### Data
 `users`, `friends` (nicknames are private to each owner), `expenses` (never deleted, undo = `voided_at`), `budgets`, `budget_alerts`,
 `groups`, `group_members` (with `left_at`), `shared_expenses` + `shares` (who owes how much), `debts` (pending → claimed → settled),
-`statement_imports`, plus `outbox`, `audit_log`, `revoked_tokens`, `idempotency`. The bot's own database holds only LangGraph's checkpoints.
+`statement_imports`, `company_links`, `work_expenses`, `work_claims`, `policy_chats` (work reimbursements), plus `outbox`, `audit_log`, `revoked_tokens`,
+`idempotency`. The bot's own database holds only LangGraph's checkpoints; the Finance Agent has its own database (companies, policy versions, claims).
 
 ## Run
 
@@ -172,13 +180,15 @@ a database driver).
    (a long random string both services share: `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
    `CODEVECTOR_MODEL` and `CODEVECTOR_BASE_URL` have working defaults. docker-compose passes these to the bot container, and `compose up`
    stops with a message if `CODEVECTOR_API_KEY` or `MCP_BOT_CLIENT_SECRET` is missing.
-3. **Docker (recommended):** `docker compose up --build` starts four containers: `mcp` (:8001), `bot` (:8000) and a Postgres for each.
+   For work reimbursements also set `FINANCE_WEBHOOK_SECRET` (another long random string) and `FINANCE_TELEGRAM_BOT_TOKEN` (a **second** bot for the manager).
+   `compose up` stops with a message if `FINANCE_WEBHOOK_SECRET` is missing. Details: [docs/REIMBURSEMENT.md](docs/REIMBURSEMENT.md#setup).
+3. **Docker (recommended):** `docker compose up --build` starts six containers: `mcp` (:8001), `bot` (:8000), `finance` (:8002) and a Postgres for each.
    The database is **new** (`expense_mcp`, volume `pgdata_mcp`; the bot's `expense_bot`, volume `pgdata_bot`); the data of the earlier
    versions (volumes `pgdata`, `pgdata_expense`) is untouched.
 
-**Local (no Docker):** Python 3.12, two Postgres databases, `pip install -r requirements.txt`, then in two terminals
-`python -m mcp_server` and `python run.py` (not plain uvicorn on Windows: see `run.py`). Set `MCP_DATABASE_URL`, `BOT_DATABASE_URL`
-and `MCP_SERVER_URL` in `.env`.
+**Local (no Docker):** Python 3.12, three Postgres databases, `pip install -r requirements.txt`, then in three terminals
+`python -m mcp_server`, `python run.py` (not plain uvicorn on Windows: see `run.py`) and `python -m finance_agent`. Set `MCP_DATABASE_URL`,
+`BOT_DATABASE_URL`, `MCP_SERVER_URL` and `FINANCE_DATABASE_URL` in `.env` (without the Finance Agent running, only the reimbursement actions say "the finance service isn't reachable"; everything else works).
 
 **Production:** `TELEGRAM_MODE=webhook`, `PUBLIC_URL=https://your.domain`, a strong `TELEGRAM_WEBHOOK_SECRET`; for the server
 `MCP_ENV=production` with `MCP_JWT_PRIVATE_KEY` (`python -m mcp_server.auth.genkey`). Details: [docs/MCP.md](docs/MCP.md).
@@ -186,8 +196,8 @@ and `MCP_SERVER_URL` in `.env`.
 `ALLOWED_TELEGRAM_IDS` (enforced by the MCP server) limits who can start using the bot; anyone you add as a friend (or who opens your invite
 link) can use it too.
 
-**Tests:** `pip install -r requirements-dev.txt`, point `TEST_MCP_DATABASE_URL` (asyncpg URL) and `TEST_BOT_DATABASE_URL` (psycopg URL) at
-scratch databases, then `pytest`. They run the real server in-process and talk to it only through MCP, like the bot does.
+**Tests:** `pip install -r requirements-dev.txt`, point `TEST_MCP_DATABASE_URL` (asyncpg URL), `TEST_BOT_DATABASE_URL` (psycopg URL) and `TEST_FINANCE_DATABASE_URL` (asyncpg URL) at
+scratch databases (the finance tests drop and recreate their tables), then `pytest`. They run the real server in-process and talk to it only through MCP, like the bot does.
 
 ## Limits
 - Friends must press Start before they can be messaged.
@@ -196,10 +206,12 @@ scratch databases, then `pytest`. They run the real server in-process and talk t
 - Reminders run inside the MCP server: run a single instance of it (a second one would send them twice).
 - Outside AI apps need a service credential from the operator for now; "Sign in with Telegram" (OAuth) is the next step, see [docs/MCP.md](docs/MCP.md#8-not-done-yet-sign-in-for-people-outside-telegram).
 - Debts already marked "paid" are not netted, and the money owed to you can only be confirmed after the other person marks it paid.
+- Work reimbursements: receipts are a yes/no answer (no photo reading yet), one company per person, and "paid" is marked by the manager. More in [docs/REIMBURSEMENT.md](docs/REIMBURSEMENT.md#limits-today).
 - The `.pptx` files in `docs/` still describe the earlier cash/bank version.
 
 ## More documentation
 - 🏗️ [Architecture](docs/ARCHITECTURE.md): the two services, tokens, chat contexts, agent graph, outbox, data model, deployment, safety
+- 🧾 [Work reimbursements](docs/REIMBURSEMENT.md): the Finance Agent, the manager's side, the A2A flow, setup and limits
 - 🔌 [MCP server](docs/MCP.md): endpoints, tokens, the result format, asking the human, tools, running it
 - 🔀 [Flows](docs/FLOWS.md): routing, expenses, splitting, the payment lifecycle, party netting, group setup and settle-up, statements, budgets
 - 🧠 [State graph](docs/STATE_GRAPH.md): how the agent loops (agent → tools → respond), with real traces and every possible path
