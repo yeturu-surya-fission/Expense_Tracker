@@ -16,17 +16,33 @@ over **A2A** (the Agent2Agent protocol).
 
 **The manager** (in the Finance bot)
 1. `/start` → name the company → gets a **company code** (e.g. `FIN-7K2QP`) to share.
-2. Pastes the policy (or sends a PDF). The agent shows how it understood it as rules; the manager taps **Save** (or says what to fix).
-3. Later, edits by talking: *"raise the hotel cap to 8000"*, *"gym is not reimbursed"*, *"add parking up to 300 a day"*. The bot shows
+2. `/setpolicy`, then pastes the policy (or sends a PDF / text file). The agent shows how it understood it as rules; the manager taps **Save** (or says what to fix).
+   A long policy that Telegram splits into several messages is collected: send all the parts, then `/done`.
+3. Later, `/editpolicy` (or just say it): *"raise the hotel cap to 8000"*, *"gym is not reimbursed"*, *"add parking up to 300 a day"*. The bot shows
    exactly what would change; **Save** makes a new policy version (old ones are kept).
 4. Each finished claim arrives as one card with the policy's recommendation: **Approve · Reject · Different amount · Ask the employee**.
+   **Different amount** goes through the expenses one by one (policy amount / full / nothing / a typed amount), shows a summary, and the employee
+   is told for each expense what was paid and what was not, e.g. `❌ late cab: not refunded (₹2,000)`.
 5. `/paid` marks approved claims as paid.
 
+| Manager command | |
+|---|---|
+| `/setpolicy` | Give the policy (or replace it: you see what changes before it's saved). `/setpolicy <text>` works too |
+| `/editpolicy` | Change part of it (`/editpolicy raise the hotel cap to 8000`) |
+| `/policy` · `/history` | The current rules · earlier versions with what changed |
+| `/claims` · `/paid` | Claims waiting for you · approved claims to mark as paid |
+| `/employees` · `/code` | Who joined · your company code |
+| *(any other message)* | Never changes the policy. The policy changes **only** through `/setpolicy` or `/editpolicy` (and then **Save**) |
+| `/done` · `/retry` · `/cancel` | Finish a policy sent in several messages · try the last step again · stop what the bot is waiting for |
+
+If the model is slow or unreachable, your text is **kept** and the bot offers **Try again** (or `/retry`): you never paste it twice.
+
 **The employee** (in the expense bot, private chat)
-1. `join company FIN-7K2QP`.
-2. `/reimburse` opens the work-reimbursement screen. Work expenses are **separate from personal spending**: they never appear in
+1. `/join FIN-7K2QP` (or say "join company FIN-7K2QP").
+2. `/work cab 450 to the client` records a **work** expense and `/personal lunch 250` a **personal** one, so the two never get mixed
+   (plain messages like "work expense: cab 450" or "lunch 250" still work). `/work` alone opens the reimbursement screen (`/reimburse` too). Work expenses are **separate from personal spending**: they never appear in
    summaries or budgets. *"work expense: cab 450 to the client"*, or *"that cab was for work"* to move one that was already logged.
-3. Asks the policy: *"will I get a refund on a hotel room?"*. The answer comes from the real policy; if details are missing the agent asks
+3. Asks the policy with `/policy will I get a refund on a hotel room?` (or just says it). `/claims` lists their claims. The answer comes from the real policy; if details are missing the agent asks
    (city? nights? amount?). If the policy says nothing, the bot offers to **ask the manager**, and the manager's answer comes back as a message.
 4. *"send my claim"* → confirm → the agent checks each item and asks for what's missing (nights, receipt) → the manager decides → the
    employee gets the result (and later "paid").
@@ -59,6 +75,39 @@ Manager gets a card:  Pune trip · Kiran Rao
 Manager  : Approve
 Kiran    : ✅ Claim #3 (Pune trip) approved: ₹12,450. ₹3,000 of the ₹15,450 you claimed isn't covered.
 ```
+
+## When a claim needs more details
+
+After "send my claim" the finance agent may ask things the policy needs (how many days / nights, do you have the receipt, was it approved
+first, which city tier). The claim waits **with the employee**, and the manager sees nothing until it is complete.
+
+- The employee just answers in their own words: *"1 day for all"*, *"2 nights and yes I have the receipt"*. No claim or item numbers are needed;
+  the answer is applied to every open question of that kind. Different answers per item work too ("lunch 2 days, dinner 1 day").
+- `/claims` (or "what do you need for my claim?") lists exactly what each claim is waiting for, and says so if the **manager** asked something.
+- "Send my claim" again does not fail: it says the expenses are already in claim #N and what that claim needs.
+- The employee always sees **their own** claim number. The manager's cards use the Finance Agent's number (so the two can differ).
+
+**Matching an expense to a rule** uses what the expense *is* (its description). A single word in the category alone (the chat assistant might
+label sweets for an event as "food") is only a hint: the finance agent's model is asked to confirm, and if no rule clearly covers the item
+it goes to the manager as "no rule covers this". Conditions that only a person can check ("only during approved business travel") are shown
+on the line as `(check: ...)`.
+
+## What a policy can say
+
+A policy is turned into **rules**. Each rule has a limit and a unit, and the unit decides how it is applied:
+
+| The policy says | Rule |
+|---|---|
+| "Hotels: Tier-1 cities ₹4,000 a night, Tier-2 ₹3,000, others ₹2,000" | one rule with **variants**; a city in the claim (Pune, Jaipur...) picks the tier, otherwise the employee is asked "Which applies: ...?" |
+| "Lunch: max ₹350 a day" | `per_day`: 2 days of lunches are limited to ₹700 |
+| "All ground transport combined must not exceed ₹5,000 per trip" | `per_claim`: **one limit shared** by every item of that kind in the claim (a ₹3,000 cab plus a ₹3,500 train pays ₹5,000, not ₹6,500) |
+| "Internet and mobile: ₹1,000 a month" | `per_month`: shared by everything this person claims in the month, **across claims** |
+| "Purchases above ₹5,000 need prior approval" | `preapproval_over`: the employee is asked whether it was approved, only above that amount |
+| "Receipts must be submitted" | `receipt_over` (0 = always) |
+| "50% of the phone bill" | `percent` |
+| "Alcohol, fines, personal shopping are not reimbursed" | rules with `covered: false`. These **win** over a paying rule (beer at dinner is alcohol, not dinner) |
+
+Every amount is computed by `finance_agent/policy/engine.py`. The model only reads the text.
 
 ## How the services talk (A2A)
 
@@ -111,6 +160,12 @@ to `http://finance:8002`. Running without Docker, see `.env.example`.
 - **Companies are isolated.** A manager sees only their company's claims; an employee only their own.
 
 ## Limits (today)
+
+- **Not enforced yet, though many policies say it:** who must approve at which amount (reporting manager / department head / finance manager),
+  the 30- and 90-day claim deadlines, who is eligible (full-time vs contractors), processing timelines, and "economy class only" (kept as a note
+  on the rule for the manager to see). The manager is the only approver, and decides these by hand on the card.
+- Reading a long policy asks the model to write a lot of structured text, so it can take a minute (`FINANCE_POLICY_TIMEOUT`, default 150 seconds).
+  It still can misread a clause: that is why you see what it understood, and why you can fix it by talking before saving.
 
 - **Receipts are a yes/no answer**, not an uploaded photo. (Reading photos needs a vision-capable model; not built.)
 - Policy edits and Q&A depend on the language model reading text correctly. That is why the manager confirms every change, and why amounts

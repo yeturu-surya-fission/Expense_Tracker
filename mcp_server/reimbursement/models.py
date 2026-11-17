@@ -59,6 +59,7 @@ class WorkClaim(Base):
     total: Mapped[Decimal] = mapped_column(MONEY)
     approved_amount: Mapped[Decimal | None] = mapped_column(MONEY)
     note: Mapped[str | None] = mapped_column(String(500))
+    decided_items: Mapped[list | None] = mapped_column(JSONB)  # the manager's decision per expense: [{ref, claimed, approved, reason}]
     questions: Mapped[list | None] = mapped_column(JSONB)  # what the Finance Agent still needs to know (status needs_info)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -33,14 +33,16 @@ class FakeLLM:
     def __init__(self, fallback=None):
         self.queue: deque = deque()
         self.calls: list[tuple[str, str]] = []
+        self.timeouts: list[int | None] = []
         self.fallback = fallback
 
     def say(self, *answers: dict) -> "FakeLLM":
         self.queue.extend(answers)
         return self
 
-    async def json(self, system: str, user: str) -> dict:
+    async def json(self, system: str, user: str, *, timeout: int | None = None) -> dict:
         self.calls.append((system, user))
+        self.timeouts.append(timeout)
         if self.queue:
             out = self.queue.popleft()
         elif self.fallback is not None:

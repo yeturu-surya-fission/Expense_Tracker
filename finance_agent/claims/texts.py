@@ -8,6 +8,11 @@ from finance_agent.policy.models import Item, Verdict
 ICON = {"eligible": "✅", "partial": "⚠️", "not_eligible": "❌", "needs_info": "❓", "needs_manager": "❓"}
 
 
+def no(claim: Claim) -> int:
+    """The number the EMPLOYEE knows this claim by (their expense tracker's number). The manager's cards use the Finance Agent's own number."""
+    return claim.external_no or claim.id
+
+
 def items_of(claim: Claim) -> list[Item]:
     return [Item.model_validate(i) for i in claim.items]
 
@@ -20,7 +25,7 @@ def claimed_total(claim: Claim) -> Decimal:
     return q2(sum((i.amount or Decimal(0) for i in items_of(claim)), Decimal(0)))
 
 
-def _label(item: Item) -> str:
+def label(item: Item) -> str:
     return (item.description or item.category or f"item {item.ref}").strip()[:50]
 
 
@@ -30,7 +35,8 @@ def lines(claim: Claim) -> list[str]:
     for item in items_of(claim):
         v = by_ref.get(item.ref)
         got = money(v.eligible) if v and v.eligible is not None else "?"
-        out.append(f"{ICON.get(v.status, '•') if v else '•'} {_label(item)}: {money(item.amount or 0)} → {got}" + (f" — {v.reason}" if v and v.status not in ("eligible",) else ""))
+        out.append(f"{ICON.get(v.status, '•') if v else '•'} {label(item)}: {money(item.amount or 0)} → {got}" + (f" — {v.reason}" if v and v.status not in ("eligible",) else "")
+                   + (f" (check: {v.check[:90]})" if v and v.check and v.status in ("eligible", "partial") else ""))
     return out
 
 
@@ -41,21 +47,34 @@ def manager_card(claim: Claim, employee_name: str) -> str:
     )
 
 
+def decided_line(d: dict) -> str:
+    """One expense in the final decision: what was claimed, what is paid, and why not all of it."""
+    claimed, got = Decimal(d["claimed"]), Decimal(d["approved"])
+    if got >= claimed:
+        return f"✅ {d['label']}: {money(got)}"
+    if got == 0:
+        return f"❌ {d['label']}: not refunded ({money(claimed)})" + (f" — {d['reason']}" if d.get("reason") else "")
+    return f"⚠️ {d['label']}: {money(got)} of {money(claimed)}" + (f" — {d['reason']}" if d.get("reason") else "")
+
+
 def employee_decision(claim: Claim) -> str:
     total = claimed_total(claim)
     if claim.status == "approved":
         diff = total - (claim.approved_amount or 0)
-        text = f"✅ Claim #{claim.id} ({claim.title}) approved: {money(claim.approved_amount or 0)}."
-        if diff > 0:
-            text += f" {money(diff)} of the {money(total)} you claimed isn't covered."
+        text = f"✅ Claim #{no(claim)} ({claim.title}) approved: {money(claim.approved_amount or 0)} of the {money(total)} you claimed." if diff > 0 \
+            else f"✅ Claim #{no(claim)} ({claim.title}) approved: {money(claim.approved_amount or 0)}."
+        if claim.decided_items:
+            text += "\n\n" + "\n".join(decided_line(d) for d in claim.decided_items)
+        elif diff > 0:
+            text += f" {money(diff)} of it isn't covered."
         if claim.decision_note:
             text += f"\nNote from your manager: {claim.decision_note}"
         return text
     if claim.status == "rejected":
-        return f"❌ Claim #{claim.id} ({claim.title}) was rejected." + (f"\nReason: {claim.decision_note}" if claim.decision_note else "")
+        return f"❌ Claim #{no(claim)} ({claim.title}) was rejected." + (f"\nReason: {claim.decision_note}" if claim.decision_note else "")
     if claim.status == "paid":
-        return f"💸 Claim #{claim.id} ({claim.title}) has been paid: {money(claim.approved_amount or 0)}."
-    return f"Claim #{claim.id} ({claim.title}) is {claim.status.replace('_', ' ')}."
+        return f"💸 Claim #{no(claim)} ({claim.title}) has been paid: {money(claim.approved_amount or 0)}."
+    return f"Claim #{no(claim)} ({claim.title}) is {claim.status.replace('_', ' ')}."
 
 
 def manager_buttons(claim: Claim, employee_name: str) -> list[list[dict]]:

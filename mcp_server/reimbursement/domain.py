@@ -187,3 +187,50 @@ def claim_line(c: WorkClaim) -> str:
     if c.status in ("approved", "paid") and c.approved_amount is not None:
         base += f" ({money(c.approved_amount)})"
     return base
+
+
+async def questions_text(session: AsyncSession, claim: WorkClaim) -> str:
+    """What a claim still needs, one line per question, with the name of the expense it is about."""
+    names = {w.id: w.description for w in (await session.execute(select(WorkExpense).where(WorkExpense.claim_id == claim.id))).scalars().all()}
+    lines = []
+    for q in claim.questions or []:
+        ref = int(float(q.get("ref", 0)))
+        lines.append(f"• {names.get(ref, f'item #{ref}')}: {q.get('text', '')}")
+    return "\n".join(lines)
+
+
+async def claim_block(session: AsyncSession, c: WorkClaim) -> str:
+    """A claim's line, plus what to do next when it is waiting for the person."""
+    text = claim_line(c)
+    if c.status == "needs_info" and c.questions:
+        text += "\n" + await questions_text(session, c) + "\n   ➜ Just tell me in your own words, e.g. “1 day for all”."
+    elif c.status == "info_requested":
+        text += (f"\n   Your manager asks: “{c.note}”" if c.note else "\n   Your manager asked you something") + "\n   ➜ Reply and I'll pass it on."
+    return text
+
+
+async def waiting_claim(session: AsyncSession, user_id: int, status: str = "needs_info") -> WorkClaim | None:
+    """The person's latest claim that is waiting for them (details we asked for, or an answer to the manager)."""
+    return (await session.execute(
+        select(WorkClaim).where(WorkClaim.user_id == user_id, WorkClaim.status == status).order_by(WorkClaim.id.desc()).limit(1).with_for_update()
+    )).scalar_one_or_none()
+
+
+async def report_rows(session: AsyncSession, user_id: int) -> list[dict]:
+    """One row per work expense, oldest first: the details we hold, the claim it went in, and what was approved for it."""
+    expenses = list((await session.execute(
+        select(WorkExpense).where(WorkExpense.user_id == user_id, WorkExpense.voided_at.is_(None)).order_by(WorkExpense.spent_on, WorkExpense.id)
+    )).scalars().all())
+    claims = {c.id: c for c in (await session.execute(select(WorkClaim).where(WorkClaim.user_id == user_id))).scalars().all()}
+    rows = []
+    for e in expenses:
+        c = claims.get(e.claim_id) if e.claim_id else None
+        decided = next((d for d in (c.decided_items or []) if int(d.get("ref", 0)) == e.id), None) if c else None
+        rows.append({
+            "id": e.id, "date": e.spent_on.isoformat(), "description": e.description, "category": e.category, "amount": str(e.amount),
+            "nights": e.nights, "days": e.days, "has_receipt": e.has_receipt, "purpose": e.purpose,
+            "claim_no": c.id if c else None, "claim_title": c.title if c else None, "status": STATUS_WORDS.get(c.status, c.status) if c else "not claimed yet",
+            "approved": decided["approved"] if decided else None, "reason": (decided or {}).get("reason") or None,
+            "claim_approved": str(c.approved_amount) if c is not None and c.approved_amount is not None else None,
+        })
+    return rows

@@ -55,6 +55,13 @@ def _needs_text(claim) -> str:
     return "To check your claim I need a little more:\n" + "\n".join(lines)
 
 
+def _int_or_none(value) -> int | None:
+    try:
+        return int(float(value)) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _claim_result(claim) -> SkillResult:
     data = {"claim_id": claim.id, "status": claim.status}
     if claim.status == "needs_info":
@@ -62,7 +69,7 @@ def _claim_result(claim) -> SkillResult:
         return SkillResult("input_required", _needs_text(claim), {**data, "questions": qs})
     lines = texts.lines(claim)
     text = (
-        f"📨 Claim #{claim.id} ({claim.title}) is with your manager.\n\n" + "\n".join(lines) +
+        f"📨 Claim #{texts.no(claim)} ({claim.title}) is with your manager.\n\n" + "\n".join(lines) +
         f"\n\nThe policy suggests {money(claim.recommended)} of {money(texts.claimed_total(claim))}. Your manager makes the final call."
     )
     return SkillResult("completed", text, {**data, "recommended": str(claim.recommended), "claimed": str(texts.claimed_total(claim)), "lines": lines})
@@ -132,7 +139,7 @@ async def submit_claim(llm: LLM, caller: Caller, payload: dict, task_id: str | N
         raise SkillError("A claim needs a list of items.")
     async with session_scope() as s:
         company, emp = await _member(s, payload, caller)
-        claim = await claims.submit(s, llm, company, emp, str(payload.get("title") or "Expense claim"), items)
+        claim = await claims.submit(s, llm, company, emp, str(payload.get("title") or "Expense claim"), items, _int_or_none(payload.get("external_no")))
         return _claim_result(claim)
 
 
@@ -148,7 +155,7 @@ async def claim_reply(llm: LLM, caller: Caller, payload: dict, task_id: str | No
             claim = await claims.answer(s, llm, company, emp, claim, {int(k): v for k, v in payload["answers"].items()})
         elif str(payload.get("text") or "").strip():
             claim = await claims.employee_reply(s, claim, emp, company, str(payload["text"]))
-            return SkillResult("completed", f"📨 Passed to your manager: claim #{claim.id} is back with them.", {"claim_id": claim.id, "status": claim.status})
+            return SkillResult("completed", f"📨 Passed to your manager: claim #{texts.no(claim)} is back with them.", {"claim_id": claim.id, "status": claim.status})
         else:
             raise SkillError("Tell me the details, or your reply to the manager.")
         return _claim_result(claim)

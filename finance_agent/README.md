@@ -18,7 +18,8 @@ finance_agent/
 │
 ├── policy/            THE POLICY
 │   ├── models.py        Rule (one line of the policy) · Item (something claimed) · Verdict (what the policy says)
-│   ├── engine.py        the maths: caps per night/day, percentages, receipts, pre-approval. Pure functions, no LLM
+│   ├── engine.py        the maths: caps per night/day, limits shared by a trip or a month, city-tier variants, percentages, receipts,
+│   │                    pre-approval. Pure functions, no LLM
 │   ├── parser.py        policy text → rules (LLM), edits from plain sentences, "what changed" diffs
 │   ├── qa.py            "will I get a refund on this room?" answered from the rules; asks follow-ups
 │   └── store.py         companies, company codes, policy versions
@@ -37,8 +38,8 @@ finance_agent/
 │   └── notify.py        signed webhooks back to the tracker (decisions, questions), retried until accepted
 │
 ├── manager/           THE MANAGER'S TELEGRAM BOT
-│   ├── service.py       everything the manager can do, with no Telegram in it (easy to test)
-│   └── bot.py           carries messages in and out; delivers notifications
+│   ├── service.py       everything the manager can do (commands, policy steps, decisions), with no Telegram in it (easy to test)
+│   └── bot.py           carries messages in and out; the command menu; delivers notifications
 │
 └── db/                this service's own database (models, session)
 ```

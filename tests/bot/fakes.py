@@ -16,6 +16,9 @@ class FakeMessage:
         self.deleted = False
         self.__dict__.update(extra)
 
+    async def reply_document(self, document=None, filename=None, caption=None, **kw):
+        self.sent.append({"text": caption or "", "document": document.read() if hasattr(document, "read") else document, "filename": filename, **kw})
+
     async def reply_text(self, text, reply_markup=None, **kw):
         m = FakeMessage(text, self.chat)
         m.reply_markup, m.kw = reply_markup, kw

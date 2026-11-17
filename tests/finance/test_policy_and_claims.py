@@ -70,7 +70,7 @@ async def test_will_i_get_a_refund_on_this_room(llm):
     llm.say({"kind": "item", "rule_id": "hotel", "item": {"description": "hotel room", "amount": 15000, "nights": 2}})
     r = await qa.answer(llm, RULES_, 3, ["Employee: will I get a refund for a room, 7500 a night for 2 nights?"])
     assert r.status == "answer"
-    assert "₹12,000 of ₹15,000" in r.text and "Hotel stays" in r.text and "policy v3" in r.text
+    assert "₹12,000 of ₹15,000" in r.text and len(r.text.splitlines()) <= 2 and "Rule:" not in r.text
 
 
 async def test_missing_details_are_asked_for_not_guessed(llm):
@@ -182,12 +182,14 @@ async def test_the_manager_sets_up_the_company_and_policy_then_edits_it(llm):
     changed = [dict(r) for r in RULES]
     changed[0]["cap_amount"] = 8000
     llm.say({"rules": changed})
-    edit = await svc.text(mgr, "raise the hotel cap to 8000")
+    chat = await svc.text(mgr, "ok thanks, what next?")  # a stray message never changes the policy, and the model is not even asked
+    assert "nothing was changed" in chat.text and "/editpolicy" in chat.text
+    edit = await svc.edit_policy(mgr, "raise the hotel cap to 8000")
     assert "→" in edit.text and "₹8,000" in edit.text
     assert "policy v2" in (await svc.button(mgr, "fp:save")).text
 
     llm.say({"rules": changed})  # the model changed nothing
-    assert "Nothing to change" in (await svc.text(mgr, "make the hotel cap 8000")).text
+    assert "Nothing to change" in (await svc.edit_policy(mgr, "make the hotel cap 8000")).text
     async with session_scope() as s:
         company = await store.company_by_code(s, code)
         assert [v.version for v in await store.history(s, company.id)] == [2, 1]  # old versions are kept
@@ -229,7 +231,10 @@ async def test_approve_reject_different_amount_ask_and_paid(llm):
 
     assert "How much do you approve" in (await svc.button(mgr, f"fa:amount:{c}")).text
     assert "type just the amount" in (await svc.text(mgr, "lots")).text.lower()
-    assert "approved for ₹2,500" in (await svc.text(mgr, "2,500")).text
+    assert "claimed ₹3,000" in (await svc.text(mgr, "9999")).text or "only claimed" in (await svc.text(mgr, "9999")).text
+    summary = await svc.text(mgr, "2,500")  # one expense: the summary comes next
+    assert "₹2,500" in summary.text and summary.buttons
+    assert "approved for ₹2,500" in (await svc.button(mgr, f"fi:{c}:ok")).text
     async with session_scope() as s:
         claim = await claims.get(s, c)
         with pytest.raises(claims.ClaimError, match="between"):
@@ -243,7 +248,7 @@ async def test_approve_reject_different_amount_ask_and_paid(llm):
     by = {(e["claim_id"], e["status"]): e for e in events}
     assert by[(a, "approved")]["approved_amount"] == "1000.00" and "approved" in by[(a, "approved")]["text"]
     assert by[(b, "rejected")]["note"] == "Not a business trip" and "Not a business trip" in by[(b, "rejected")]["text"]
-    assert by[(c, "approved")]["approved_amount"] == "2500.00" and "₹500 of the ₹3,000" in by[(c, "approved")]["text"]
+    assert by[(c, "approved")]["approved_amount"] == "2500.00" and "₹2,500 of the ₹3,000" in by[(c, "approved")]["text"] and "cab: ₹2,500 of ₹3,000" in by[(c, "approved")]["text"]
     assert (a, "paid") in by
 
 
@@ -316,3 +321,63 @@ async def test_only_allowed_people_can_become_managers(llm, monkeypatch):
     assert "company called" in (await svc.start(111)).text or "called" in (await svc.start(111)).text
     async with session_scope() as s:
         assert (await s.execute(select(Claim))).scalars().all() is not None
+
+
+async def test_a_manual_amount_is_decided_expense_by_expense_and_the_employee_sees_which_were_cut(llm):
+    svc, mgr = ManagerService(llm), next(_ids)
+    await svc.start(mgr)
+    code = "FIN-" + (await svc.text(mgr, "Epsilon Co")).text.split("FIN-")[1].split()[0].rstrip(".:,")
+    llm.say({"rules": RULES})
+    await svc.text(mgr, "policy")
+    await svc.button(mgr, "fp:save")
+    async with session_scope() as s:
+        company = await store.company_by_code(s, code)
+        emp, _ = await claims.join(s, company, "emp-9", "Ravi Kumar")
+        cid = (await claims.submit(s, llm, company, emp, "Client visit", [
+            {"category": "cab", "description": "cab", "amount": "3000"},
+            {"category": "cab", "description": "cab again", "amount": "2500"},
+            {"category": "cab", "description": "late cab", "amount": "2000"},
+        ])).id
+
+    first = await svc.button(mgr, f"fa:amount:{cid}")  # asks about each expense in turn
+    assert "expense 1 of 3" in first.text and any(b["data"] == f"fi:{cid}:p" for b in first.buttons[0])
+    second = await svc.button(mgr, f"fi:{cid}:f")  # full amount for the first
+    assert "expense 2 of 3" in second.text
+    third = await svc.text(mgr, "2000")  # typed: pays 2,000 of 2,500
+    assert "expense 3 of 3" in third.text
+    summary = await svc.button(mgr, f"fi:{cid}:z")  # nothing for the last
+    assert "₹7,000 of ₹7,500" not in summary.text and "Total ₹5,000 of ₹7,500" in summary.text
+    done = await svc.button(mgr, f"fi:{cid}:ok")
+    assert "approved for ₹5,000" in done.text
+
+    event = [e for e in await outgoing("tracker") if e.get("claim_id") == cid and e["status"] == "approved"][0]
+    text = event["text"]
+    assert "approved: ₹5,000 of the ₹7,500 you claimed" in text
+    assert "✅ cab: ₹3,000" in text and "⚠️ cab again: ₹2,000 of ₹2,500" in text and "❌ late cab: not refunded (₹2,000)" in text
+    async with session_scope() as s:
+        claim = await claims.get(s, cid)
+        assert [d["approved"] for d in claim.decided_items] == ["3000.00", "2000.00", "0.00"]
+
+
+async def test_the_manager_cannot_approve_more_than_was_claimed_for_one_expense(llm):
+    svc, mgr = ManagerService(llm), next(_ids)
+    await svc.start(mgr)
+    code = "FIN-" + (await svc.text(mgr, "Zeta Co")).text.split("FIN-")[1].split()[0].rstrip(".:,")
+    llm.say({"rules": RULES})
+    await svc.text(mgr, "policy")
+    await svc.button(mgr, "fp:save")
+    async with session_scope() as s:
+        company = await store.company_by_code(s, code)
+        emp, _ = await claims.join(s, company, "emp-10", "Sana Iqbal")
+        cid = (await claims.submit(s, llm, company, emp, "One cab", [{"category": "cab", "description": "cab", "amount": "700"}])).id
+    await svc.button(mgr, f"fa:amount:{cid}")
+    assert "only claimed ₹700" in (await svc.text(mgr, "900")).text
+
+
+def test_an_unknown_limit_period_never_fails_the_whole_policy():
+    from finance_agent.policy.models import Rule
+    year = Rule.model_validate({"id": "training", "name": "Training", "cap_amount": 25000, "cap_unit": "per_year"})
+    assert year.cap_unit == "per_item" and "per year" in year.conditions  # kept as a note for the manager
+    assert Rule.model_validate({"id": "x", "name": "X", "cap_unit": "per trip"}).cap_unit == "per_claim"
+    assert Rule.model_validate({"id": "x", "name": "X", "cap_unit": "per person"}).cap_unit == "per_item"
+    assert Rule.model_validate({"id": "x", "name": "X"}).cap_unit == "per_item" and Rule.model_validate({"id": "x", "name": "X", "cap_unit": None}).cap_unit == "per_item"

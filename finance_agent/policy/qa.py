@@ -11,7 +11,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from finance_agent.llm import LLM, LLMError
-from finance_agent.policy.engine import ask_for, describe, evaluate
+from finance_agent.formatting import money
+from finance_agent.policy.engine import POOLED, ask_for, effective_cap, evaluate
 from finance_agent.policy.models import Item, Rule
 
 SYSTEM = """You help an employee find out what their company's expense policy says. You get the policy as JSON rules and the
@@ -19,10 +20,13 @@ conversation so far (Employee / Agent lines). Decide what the employee is asking
 
 1. A question about a specific purchase ("will I get a refund on this room?", "can I claim a client lunch of 1400?"):
    {"kind": "item", "rule_id": "<id of the ONE rule that covers it, or null if no rule does>",
-    "item": {"description": "...", "amount": <number or null>, "nights": <integer or null>, "days": <integer or null>}}
-   Only fill amount / nights / days if the employee actually said them in the conversation (6k = 6000). Never guess.
+    "item": {"description": "...", "amount": <number or null>, "nights": <integer or null>, "days": <integer or null>,
+             "variant": "<which case of the rule applies, e.g. the city tier, only if the employee said it or named a city that decides it; else null>"}}
+   Only fill amount / nights / days / variant if the employee actually said them in the conversation (6k = 6000). Never guess.
 2. A general question about the policy ("what is the hotel cap?", "which expenses are covered?"):
-   {"kind": "general", "answer": "<answer using ONLY the rules; name the rule you used>"}
+   {"kind": "general", "answer": "<the answer using ONLY the rules, in plain words, MAX 3 short lines (use '•' lines for a list). Give only what was asked:
+    for 'what is the hotel cap?' reply 'Hotels: ₹4,000 a night in Tier-1 cities, ₹3,000 in Tier-2, ₹2,000 elsewhere.' and nothing more. No greeting, no
+    extra rules, no repeating the question. Say 'the lunch limit is ₹350 a day'; never mention rule ids, field names, JSON or 'percent'>"}
    If the rules do not say, use kind "not_covered" instead.
 3. You cannot tell what the purchase is: {"kind": "missing", "questions": ["<one short question>"]}
 4. The policy says nothing about it: {"kind": "not_covered"}
@@ -72,13 +76,14 @@ async def answer(llm: LLM, rules: list[Rule], version: int, transcript: list[str
     raw = out.get("item") or {}
     if rule is None:
         return QaResult("not_covered", "I can't find a rule in the company policy that covers that." + foot, can_escalate=True)
-    item = Item(description=str(raw.get("description") or ""), amount=_num(raw.get("amount")), nights=_int(raw.get("nights")), days=_int(raw.get("days")))
+    item = Item(description=str(raw.get("description") or ""), amount=_num(raw.get("amount")), nights=_int(raw.get("nights")), days=_int(raw.get("days")),
+                variant=(str(raw.get("variant")).strip() or None) if raw.get("variant") else None)
 
     if not rule.covered:
-        return QaResult("answer", f"❌ {evaluate(rule, item).reason}\nRule: {describe(rule)}{foot}")
+        return QaResult("answer", f"❌ {evaluate(rule, item).reason}")
 
     missing = [q.text for q in ask_for(rule, item, strict=False)]
-    has_limit = rule.cap_amount is not None or rule.percent < 100
+    has_limit = rule.cap_amount is not None or rule.percent < 100 or any(v.cap_amount is not None for v in rule.variants)
     if has_limit and item.amount is None:
         missing.append("How much is it?")
     if missing:
@@ -92,4 +97,23 @@ async def answer(llm: LLM, rules: list[Rule], version: int, transcript: list[str
         head = f"✅ Yes, {rule.name.lower()} is fully covered: you'd get the whole amount."
     else:
         head = f"⚠️ Partly. {verdict.reason}"
-    return QaResult("answer", f"{head}\nRule: {describe(rule)}{foot}")
+    cap = effective_cap(rule, item)
+    shared = ""
+    if rule.cap_unit in POOLED and cap is not None:
+        span = "month" if rule.cap_unit == "per_month" else "trip"
+        shared = f" (that limit is shared by everything of this kind in the {span})"
+    return QaResult("answer", f"{head}{shared}\n{_needs(rule)}".rstrip())
+
+
+def _needs(rule: Rule) -> str:
+    """The few things the employee must do to get it, in one line (the limit is already in the answer)."""
+    bits = []
+    if rule.receipt_over is not None:
+        bits.append("keep the receipt" if rule.receipt_over == 0 else f"receipt needed above {money(rule.receipt_over)}")
+    if rule.needs_preapproval:
+        bits.append("needs approval before you spend")
+    elif rule.preapproval_over is not None:
+        bits.append(f"needs approval first above {money(rule.preapproval_over)}")
+    if rule.conditions:
+        bits.append(rule.conditions.strip().rstrip(".")[:80])
+    return ("📌 " + "; ".join(bits)) if bits else ""

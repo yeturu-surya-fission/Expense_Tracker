@@ -36,7 +36,8 @@ class Settings(BaseSettings):
     codevector_base_url: str = Field(
         "https://coding-gateway.fissionlabs.com/gateway/openai/v1", validation_alias=AliasChoices("FINANCE_CODEVECTOR_BASE_URL", "CODEVECTOR_BASE_URL")
     )
-    llm_timeout: int = 45
+    llm_timeout: int = 45  # a quick answer (a question, one item)
+    policy_timeout: int = 150  # reading or editing a whole policy writes a lot of JSON: it is allowed longer
 
     currency_symbol: str = Field("₹", validation_alias=AliasChoices("FINANCE_CURRENCY_SYMBOL", "CURRENCY_SYMBOL"))
 

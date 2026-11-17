@@ -45,7 +45,7 @@ class PrivateMixin(BotBase):
             await update.effective_message.reply_text(await self._help_text(update.effective_user), reply_markup=ReplyKeyboardRemove())
 
     # ------------------------------------------------------------ commands (no LLM, instant)
-    async def _direct(self, tg, message, action: str) -> None:
+    async def _direct(self, tg, message, action: str, args: list[str] | None = None) -> None:
         ident = self.private(tg)
         if action == "summary":
             res = await self.call(ident, "ui_view", view="summary", arg="this_month")
@@ -63,17 +63,39 @@ class PrivateMixin(BotBase):
         elif action == "dues":
             res = await self.call(ident, "ui_view", view="dues")
             await message.reply_text(res.message, reply_markup=kb.dues_keyboard(res.data.get("dues")))
-        elif action == "reimburse":
-            await self._reimburse_home(tg, message)
+        elif action in ("reimburse", "join", "claims", "policy", "workpdf"):
+            await self._reimburse_command(tg, message, action, list(args or []))
         elif action in ("recent", "budgets", "friends", "invite"):
             await message.reply_text((await self.call(ident, "ui_view", view=action)).message)
 
     async def on_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """/summary /history /budgets /friends /dues /daily /trend /invite /undo /reimburse"""
+        """/summary /history /budgets /friends /dues /daily /trend /invite /undo /reimburse /join /claims /policy"""
         if await self._guard(update):
             action = update.effective_message.text.split()[0].lstrip("/").split("@")[0].lower()
             action = "recent" if action == "history" else action
-            await self._direct(update.effective_user, update.effective_message, action)
+            await self._direct(update.effective_user, update.effective_message, action, context.args)
+
+    async def on_kind_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/work <text> records a WORK expense (company pays back), /personal <text> a personal one. Free text still works as before."""
+        if not await self._guard(update):
+            return
+        msg = update.effective_message
+        action = msg.text.split()[0].lstrip("/").split("@")[0].lower()
+        text = " ".join(context.args or []).strip()
+        if not text:
+            if action == "work":  # no text: show the work screen (what is waiting, claim it, ask the policy)
+                await self._reimburse_home(update.effective_user, msg)
+            else:
+                await msg.reply_text("Say what you spent, for example:\n/personal lunch 250\n(Or just type “lunch 250”: that is personal too.)")
+            return
+        if len(text) > MAX_USER_MESSAGE_CHARS:
+            await msg.reply_text("✂️ That message is too long for me. Please keep it short.")
+            return
+        # the prefix tells the assistant which kind it is, so it never has to guess
+        prefix = "WORK expense (the company pays it back; use add_work_expense)" if action == "work" else "PERSONAL expense (not for work; use add_expenses, never add_work_expense)"
+        async with keep_typing(context.bot, msg.chat_id):
+            reply = await self._ask(update.effective_user, msg.chat, f"{prefix}: {text}", bot=context.bot)
+        await self._send(msg, reply)
 
     # ------------------------------------------------------------ free text -> agent
     async def on_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

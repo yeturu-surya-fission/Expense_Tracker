@@ -5,7 +5,7 @@ import logging
 import re
 
 from sqlalchemy import select
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Bot, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -16,7 +16,22 @@ from finance_agent.manager.service import ManagerService, Reply
 
 log = logging.getLogger(__name__)
 MAX_FILE_BYTES = 5 * 1024 * 1024
-MAX_TEXT_CHARS = 20000
+MAX_TEXT_CHARS = 30000
+
+MANAGER_COMMANDS = [
+    BotCommand("setpolicy", "📋 Give (or replace) the reimbursement policy"),
+    BotCommand("editpolicy", "✏️ Change part of the policy"),
+    BotCommand("policy", "📖 See the current rules"),
+    BotCommand("claims", "📨 Claims waiting for your decision"),
+    BotCommand("paid", "💸 Mark approved claims as paid"),
+    BotCommand("employees", "👥 Who has joined"),
+    BotCommand("code", "🔑 Your company code"),
+    BotCommand("history", "🕘 Earlier policy versions"),
+    BotCommand("done", "✅ Finish a policy sent in several messages"),
+    BotCommand("retry", "🔁 Try the last policy step again"),
+    BotCommand("cancel", "✖ Stop what I'm waiting for"),
+    BotCommand("help", "❓ How this works"),
+]
 
 
 def markup(buttons: list[list[dict]] | None) -> InlineKeyboardMarkup | None:
@@ -37,14 +52,27 @@ class ManagerBot:
     async def _send(self, message, reply: Reply) -> None:
         await message.reply_text(reply.text, reply_markup=markup(reply.buttons))
 
-    def _command(self, name: str):
+    @staticmethod
+    def _progress(message):
+        async def say(text: str) -> None:
+            await message.reply_text(text)
+        return say
+
+    def _command(self, name: str, *, text_after: bool = False, slow: bool = False):
+        """A /command. `text_after`: whatever follows the command is passed on (/setpolicy <the policy>). `slow`: tell the manager we're working."""
         async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            await self._send(update.effective_message, await getattr(self.service, name)(update.effective_user.id))
+            msg = update.effective_message
+            kwargs = {}
+            if text_after:
+                kwargs["text"] = (msg.text.split(None, 1)[1] if len((msg.text or "").split(None, 1)) > 1 else "")[:MAX_TEXT_CHARS]
+            if slow:
+                kwargs["progress"] = self._progress(msg)
+            await self._send(msg, await getattr(self.service, name)(update.effective_user.id, **kwargs))
         return handler
 
     async def on_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = update.effective_message
-        await self._send(msg, await self.service.text(update.effective_user.id, msg.text[:MAX_TEXT_CHARS]))
+        await self._send(msg, await self.service.text(update.effective_user.id, msg.text[:MAX_TEXT_CHARS], self._progress(msg)))
 
     async def on_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg, doc = update.effective_message, update.effective_message.document
@@ -60,12 +88,12 @@ class ManagerBot:
         if not text.strip():
             await msg.reply_text("I couldn't find any text in that file (a scanned PDF?). Please paste the policy text instead.")
             return
-        await self._send(msg, await self.service.text(update.effective_user.id, text[:MAX_TEXT_CHARS]))
+        await self._send(msg, await self.service.document(update.effective_user.id, text[:MAX_TEXT_CHARS], self._progress(msg)))
 
     async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         q = update.callback_query
         await q.answer()
-        reply = await self.service.button(q.from_user.id, q.data)
+        reply = await self.service.button(q.from_user.id, q.data, self._progress(q.message))
         try:
             await q.edit_message_reply_markup(reply_markup=None)  # buttons are one-shot
         except TelegramError:
@@ -82,7 +110,15 @@ def build_application(service: ManagerService) -> Application:
     private = filters.ChatType.PRIVATE
     app.add_handler(CommandHandler("start", bot._command("start"), filters=private))
     app.add_handler(CommandHandler("help", bot._command("help"), filters=private))
+    app.add_handler(CommandHandler("setpolicy", bot._command("set_policy", text_after=True, slow=True), filters=private))
+    app.add_handler(CommandHandler("editpolicy", bot._command("edit_policy", text_after=True, slow=True), filters=private))
+    app.add_handler(CommandHandler("done", bot._command("done", slow=True), filters=private))
+    app.add_handler(CommandHandler("retry", bot._command("retry", slow=True), filters=private))
+    app.add_handler(CommandHandler("cancel", bot._command("cancel"), filters=private))
     app.add_handler(CommandHandler("policy", bot._command("policy"), filters=private))
+    app.add_handler(CommandHandler("history", bot._command("history"), filters=private))
+    app.add_handler(CommandHandler("employees", bot._command("employees"), filters=private))
+    app.add_handler(CommandHandler("code", bot._command("code"), filters=private))
     app.add_handler(CommandHandler("claims", bot._command("pending"), filters=private))
     app.add_handler(CommandHandler("paid", bot._command("paid_list"), filters=private))
     app.add_handler(MessageHandler(private & filters.Document.ALL, bot.on_document))

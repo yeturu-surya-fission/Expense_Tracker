@@ -125,7 +125,12 @@ async def test_the_whole_journey(world):
     # the decision reaches the employee as a signed webhook
     assert await deliver_decisions(w) >= 1
     messages = await inbox(w, kiran)
-    assert any("approved: ₹12,450" in m and "₹3,000 of the ₹15,450" in m for m in messages)
+    assert any("approved: ₹12,450 of the ₹15,450" in m and "Pune hotel: ₹12,000 of ₹15,000" in m for m in messages)
+
+    # the work report knows each expense and what was approved for it
+    report = (await kiran.ok("work_report"))["data"]["rows"]
+    hotel_row = next(r for r in report if r["id"] == hotel_id)
+    assert hotel_row["approved"] == "12000.00" and "limit" in hotel_row["reason"] and hotel_row["claim_title"] == "Pune trip"
     assert "approved" in (await kiran.ok("my_claims"))["text"] and "₹12,450" in (await kiran.ok("my_claims", claim_id=claim_id))["text"]
 
     # paying it is told too
@@ -242,3 +247,84 @@ async def test_the_agent_card_and_the_door_are_public_and_locked_respectively(wo
         assert card["name"] == "Finance Agent" and {s["id"] for s in card["skills"]} >= {"ask_policy", "submit_claim"}
         assert (await c.post("/a2a", json={"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {}})).status_code == 401
         assert (await c.post("/a2a", json={}, headers={"Authorization": "Bearer not-a-token"})).status_code == 401
+
+
+async def test_a_claim_waiting_for_details_is_answered_in_plain_words_without_any_numbers(world):
+    """The conversation that failed in real use: 'It is 1 day for all' must reach the finance agent and the claim must reach the manager."""
+    w, llm = world, world.llm
+    gopal = await w.harness.person("K Gopal")
+    await gopal.ok("join_company", code=w.code)
+    await gopal.ok("add_work_expense", items=[{"amount": 6000, "category": "flight", "description": "flight from Hyderabad to Bengaluru"}])
+    await gopal.ok("add_work_expense", items=[
+        {"amount": 200, "category": "lunch", "description": "lunch"}, {"amount": 300, "category": "dinner", "description": "dinner"},
+    ])
+    await gopal.ok("add_work_expense", items=[{"amount": 500, "category": "sweets", "description": "sweets for business event"}])
+    llm.say({"rule_id": None}, {"rule_id": None})  # nothing in the policy covers a flight (in these test rules) or sweets: the manager decides
+
+    sent = await gopal.ok("submit_claim", title="Client meeting", answers={"confirm": "yes"})
+    claim_id = sent["data"]["claim_id"]
+    assert sent["data"]["needs_info"] and "lunch: How many days?" in sent["text"] and "dinner: How many days?" in sent["text"]
+    assert f"claim #{claim_id}" in sent["text"] and "1 day for all" in sent["text"]  # tells them how to answer
+
+    # asking what is needed (the user asked exactly this) lists the questions
+    listed = (await gopal.ok("my_claims"))["text"]
+    assert "waiting for details" not in listed and "needs more details from you" in listed and "lunch: How many days?" in listed and "1 day for all" in listed
+    # sending the claim again does not fail with 'they don't exist': it says what the claim is waiting for
+    again = await gopal.ok("submit_claim")
+    assert f"already in claim #{claim_id}" in again["text"] and "dinner: How many days?" in again["text"]
+    # an answer that is about something else is explained, not swallowed
+    wrong = await gopal.call("claim_answer", nights=2)
+    assert wrong["status"] == "rejected" and "doesn't answer" in wrong["text"] and "lunch: How many days?" in wrong["text"]
+
+    # "It is 1 day for all": no claim number, no item numbers
+    done = await gopal.ok("claim_answer", days=1)
+    assert done["data"]["status"] == "awaiting_manager" and "with your manager" in done["text"]
+    cards = [c for c in await manager_cards(w) if "K Gopal" in c.text and "Client meeting" in c.text]
+    assert cards, "the manager gets the claim"
+    card = cards[-1].text
+    assert "lunch: ₹200 → ₹200" in card and "dinner: ₹300 → ₹300" in card
+    assert "flight from Hyderabad to Bengaluru: ₹6,000" in card and "sweets for business event: ₹500" in card and "your manager will decide" in card
+    assert "waiting for details" not in (await gopal.ok("my_claims"))["text"]
+
+
+async def test_the_manager_question_is_shown_in_my_claims_and_answered_without_a_claim_number(world):
+    w, kiran = world, await world.harness.person("Question Person")
+    await kiran.ok("join_company", code=w.code)
+    await kiran.ok("add_work_expense", items=[{"amount": 700, "category": "cab", "description": "cab"}])
+    await kiran.ok("submit_claim", title="Offsite", answers={"confirm": "yes"})
+    card = [c for c in await manager_cards(w) if "Question Person" in c.text and "Claim #" in c.text][-1]
+    remote_id = int(card.text.split("Claim #")[1].split()[0])
+    await w.svc.button(w.mgr, f"fa:ask:{remote_id}")
+    await w.svc.text(w.mgr, "Which client was this for?")
+    await deliver_decisions(w)
+    shown = (await kiran.ok("my_claims"))["text"]
+    assert "Your manager asks: “Which client was this for?”" in shown and "Reply and I'll pass it on" in shown
+    await kiran.ok("claim_answer", text="Globex")  # no claim number needed
+    assert any("Question Person replied" in c.text and "Globex" in c.text for c in await manager_cards(w))
+
+
+async def test_the_employee_always_sees_their_own_claim_number_and_the_manager_sees_the_conditions(world):
+    w = world
+    gopal = await w.harness.person("Number Person")
+    await gopal.ok("join_company", code=w.code)
+    await gopal.ok("add_work_expense", items=[{"amount": 200, "category": "lunch", "description": "client lunch", "days": 1}])
+    sent = await gopal.ok("submit_claim", title="Client lunch", answers={"confirm": "yes"})
+    mine = sent["data"]["claim_id"]  # the number the employee knows (their own list)
+    assert f"Claim #{mine} (Client lunch) is with your manager" in sent["text"]
+    card = [c for c in await manager_cards(w) if "Number Person" in c.text and "Claim #" in c.text][-1]
+    theirs = int(card.text.split("Claim #")[1].split()[0])  # the Finance Agent's own number, on the manager's card
+    assert "(check: only during business travel)" in card.text  # a condition only a person can verify is shown, not silently ignored
+    await w.svc.button(w.mgr, f"fa:approve:{theirs}")
+    await deliver_decisions(w)
+    assert any(f"Claim #{mine} (Client lunch) approved" in m for m in await inbox(w, gopal))  # not the Finance Agent's number
+
+
+async def test_the_new_column_is_added_to_a_finance_database_that_already_exists(world):
+    from sqlalchemy import text
+    from finance_agent.db.session import engine, init_db
+    async with engine.begin() as conn:
+        await conn.execute(text("ALTER TABLE claims DROP COLUMN external_no"))  # a database from before this column existed
+    await init_db()
+    async with engine.connect() as conn:
+        cols = {r[0] for r in (await conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'claims'"))).all()}
+    assert "external_no" in cols

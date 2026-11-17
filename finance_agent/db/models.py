@@ -66,7 +66,9 @@ class Claim(Base):
     recommended: Mapped[Decimal] = mapped_column(MONEY, default=0)
     approved_amount: Mapped[Decimal | None] = mapped_column(MONEY)
     decision_note: Mapped[str | None] = mapped_column(String(500))
+    decided_items: Mapped[list | None] = mapped_column(JSONB)  # per expense: [{ref, claimed, approved, reason}] so the employee sees which ones were cut
     policy_version: Mapped[int] = mapped_column(Integer)
+    external_no: Mapped[int | None] = mapped_column(Integer)  # the number the employee knows this claim by (their tracker's claim id)
     thread: Mapped[list] = mapped_column(JSONB, default=list)  # questions and answers between manager and employee
     paid: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

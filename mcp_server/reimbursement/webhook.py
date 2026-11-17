@@ -57,7 +57,11 @@ async def finance_webhook(request: Request) -> JSONResponse:
             if event == "claim_update" and claim.status == status and claim.approved_amount == approved:
                 return JSONResponse({"ok": True, "duplicate": True})  # the same news twice (a retry): tell the person once
             claim.status, claim.approved_amount = status, approved
-            if payload.get("note"):
+            if isinstance(payload.get("items"), list):
+                claim.decided_items = payload["items"]  # which expense was paid, and which was cut
+            if event == "claim_question":
+                claim.note = str(payload.get("question") or "")[:500] or None  # shown in /claims so the person knows what to answer
+            elif payload.get("note"):
                 claim.note = str(payload["note"])[:500]
             claim.questions = None
         elif event != "manager_answer":

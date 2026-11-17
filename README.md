@@ -54,6 +54,7 @@ Type `/` in Telegram to see them. There is no permanent keyboard under the text 
 | `/friends` · `/invite` | Your friends; your invite link |
 | `/dues` | Who owes whom, with the pay buttons |
 | `/reimburse` | Work reimbursements: add, send a claim, see claims, ask the policy |
+| `/join CODE` · `/claims` · `/policy <question>` | Join your company · your claims · ask the company policy |
 | `/undo` · `/help` | Undo the last expense; what you can say |
 
 | Group chat | |

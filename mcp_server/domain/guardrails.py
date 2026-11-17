@@ -22,9 +22,9 @@ HELP = (
     "• add friend Surya 123456789  (or /invite to get a link)\n"
     "• dinner 3000, split equally with Surya and Ravi\n"
     "• /dues shows who owes whom\n\n"
-    "🧾 Work reimbursements: /reimburse. “work expense: cab 450 to the client”, “will I get a refund on a hotel room?”, “send my claim”.\n\n"
+    "🧾 Work reimbursements: /reimburse. Keep them apart: /work cab 450 for a work expense, /personal lunch 250 for a personal one (plain messages still work too). “work expense: cab 450 to the client”, “will I get a refund on a hotel room?”, “send my claim”.\n\n"
     "🧳 Trips: create a Telegram group, add your friends and add me. Anyone there can mention me ('@me I paid 1000 for petrol') and say '@me split the bill'.\n\n"
-    "Type / to see every command: /summary /dues /history /budgets /friends /invite /daily /trend /undo /reimburse /help."
+    "Type / to see every command: /summary /dues /history /budgets /friends /invite /daily /trend /undo /work /personal /reimburse /policy /claims /join /help."
 )
 
 MAX_CLARIFY_CHARS = 200

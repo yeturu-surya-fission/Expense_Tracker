@@ -1,0 +1,316 @@
+[
+ {
+  "id": "air_travel",
+  "name": "Flight tickets",
+  "keywords": [
+   "flight",
+   "airfare",
+   "airline",
+   "plane",
+   "air ticket"
+  ],
+  "covered": true,
+  "percent": 100,
+  "cap_amount": null,
+  "cap_unit": "per_item",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": "economy class only, for official business travel"
+ },
+ {
+  "id": "ground_transport",
+  "name": "Ground transport",
+  "keywords": [
+   "taxi",
+   "cab",
+   "auto-rickshaw",
+   "auto",
+   "public transport",
+   "bus",
+   "train",
+   "metro",
+   "fuel",
+   "petrol",
+   "diesel",
+   "mileage"
+  ],
+  "covered": true,
+  "percent": 100,
+  "cap_amount": "5000",
+  "cap_unit": "per_claim",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": "one combined limit for all local and intercity ground transportation in a business trip; fuel for personal vehicles used for official travel requires approval"
+ },
+ {
+  "id": "breakfast",
+  "name": "Breakfast",
+  "keywords": [
+   "breakfast"
+  ],
+  "covered": true,
+  "percent": 100,
+  "cap_amount": "200",
+  "cap_unit": "per_day",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": "only during approved business travel"
+ },
+ {
+  "id": "lunch",
+  "name": "Lunch",
+  "keywords": [
+   "lunch"
+  ],
+  "covered": true,
+  "percent": 100,
+  "cap_amount": "350",
+  "cap_unit": "per_day",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": "only during approved business travel"
+ },
+ {
+  "id": "dinner",
+  "name": "Dinner",
+  "keywords": [
+   "dinner"
+  ],
+  "covered": true,
+  "percent": 100,
+  "cap_amount": "450",
+  "cap_unit": "per_day",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": "only during approved business travel"
+ },
+ {
+  "id": "meals_total",
+  "name": "Total daily meals",
+  "keywords": [
+   "meals",
+   "meal",
+   "food"
+  ],
+  "covered": true,
+  "percent": 100,
+  "cap_amount": "1000",
+  "cap_unit": "per_day",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": "combined limit for breakfast, lunch and dinner in a single day during approved business travel"
+ },
+ {
+  "id": "hotel",
+  "name": "Hotel accommodation",
+  "keywords": [
+   "hotel",
+   "room",
+   "stay",
+   "lodging",
+   "accommodation"
+  ],
+  "covered": true,
+  "percent": 100,
+  "cap_amount": null,
+  "cap_unit": "per_night",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [
+   {
+    "label": "Tier-1 cities",
+    "keywords": [
+     "tier-1",
+     "tier 1",
+     "metro"
+    ],
+    "cap_amount": "4000"
+   },
+   {
+    "label": "Tier-2 cities",
+    "keywords": [
+     "tier-2",
+     "tier 2"
+    ],
+    "cap_amount": "3000"
+   },
+   {
+    "label": "Other locations",
+    "keywords": [],
+    "cap_amount": "2000"
+   }
+  ],
+  "conditions": "must be reasonably priced and approved by the reporting manager"
+ },
+ {
+  "id": "internet_mobile",
+  "name": "Internet and mobile",
+  "keywords": [
+   "internet",
+   "mobile",
+   "phone",
+   "broadband",
+   "data",
+   "sim",
+   "recharge"
+  ],
+  "covered": true,
+  "percent": 100,
+  "cap_amount": "1000",
+  "cap_unit": "per_month",
+  "receipt_over": "0",
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": "only when required for official work"
+ },
+ {
+  "id": "equipment",
+  "name": "Office equipment and supplies",
+  "keywords": [
+   "laptop",
+   "keyboard",
+   "monitor",
+   "supplies",
+   "equipment",
+   "accessories"
+  ],
+  "covered": true,
+  "percent": 100,
+  "cap_amount": null,
+  "cap_unit": "per_item",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": "5000",
+  "variants": [],
+  "conditions": "approved office supplies and work-related accessories only; personal purchases are not eligible"
+ },
+ {
+  "id": "personal_shopping",
+  "name": "Personal shopping and entertainment",
+  "keywords": [
+   "shopping",
+   "entertainment",
+   "movies",
+   "recreation"
+  ],
+  "covered": false,
+  "percent": 100,
+  "cap_amount": null,
+  "cap_unit": "per_item",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": ""
+ },
+ {
+  "id": "alcohol_tobacco",
+  "name": "Alcohol and tobacco",
+  "keywords": [
+   "alcohol",
+   "beer",
+   "wine",
+   "liquor",
+   "tobacco",
+   "cigarette"
+  ],
+  "covered": false,
+  "percent": 100,
+  "cap_amount": null,
+  "cap_unit": "per_item",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": ""
+ },
+ {
+  "id": "fines_penalties",
+  "name": "Traffic fines and penalties",
+  "keywords": [
+   "fine",
+   "penalty",
+   "traffic fine",
+   "challan"
+  ],
+  "covered": false,
+  "percent": 100,
+  "cap_amount": null,
+  "cap_unit": "per_item",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": ""
+ },
+ {
+  "id": "family_expenses",
+  "name": "Expenses incurred by family members",
+  "keywords": [
+   "family",
+   "spouse",
+   "children",
+   "dependents"
+  ],
+  "covered": false,
+  "percent": 100,
+  "cap_amount": null,
+  "cap_unit": "per_item",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": ""
+ },
+ {
+  "id": "personal_travel",
+  "name": "Personal travel",
+  "keywords": [
+   "personal travel",
+   "vacation",
+   "leisure travel"
+  ],
+  "covered": false,
+  "percent": 100,
+  "cap_amount": null,
+  "cap_unit": "per_item",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": ""
+ },
+ {
+  "id": "undocumented_expenses",
+  "name": "Expenses without valid documentation",
+  "keywords": [
+   "no receipt",
+   "missing receipt",
+   "without documentation",
+   "no invoice"
+  ],
+  "covered": false,
+  "percent": 100,
+  "cap_amount": null,
+  "cap_unit": "per_item",
+  "receipt_over": null,
+  "needs_preapproval": false,
+  "preapproval_over": null,
+  "variants": [],
+  "conditions": ""
+ }
+]

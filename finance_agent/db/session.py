@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from finance_agent.config import settings
@@ -26,3 +27,6 @@ async def init_db() -> None:
     if settings.auto_create_tables:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # create_all never alters existing tables: add columns introduced after a database was first created
+            await conn.execute(text("ALTER TABLE claims ADD COLUMN IF NOT EXISTS external_no INTEGER"))
+            await conn.execute(text("ALTER TABLE claims ADD COLUMN IF NOT EXISTS decided_items JSONB"))

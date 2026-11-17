@@ -352,3 +352,75 @@ async def test_reimburse_screen_and_buttons_before_joining_a_company(make_handle
 async def test_reimburse_is_in_the_command_menu():
     from app.bot.app import COMMANDS
     assert "reimburse" in [c.command for c in COMMANDS]
+
+
+async def test_employee_reimbursement_commands_go_straight_to_the_tools(make_handlers):
+    h, bot = make_handlers(), FakeBot()
+    user = tg_user(new_telegram_id(), "Kiran")
+
+    async def run(text, args):
+        msg = FakeMessage(text, private_chat(user.id), user)
+        await h.on_command(update(user, msg), context(bot, args=args))
+        return msg.sent[-1]["text"]
+
+    assert "/join FIN-7K2QP" in await run("/join", [])  # no code: tells how
+    assert "joined a company" not in await run("/join", [])
+    assert "haven't sent any claims" in await run("/claims", [])
+    assert "Ask me anything about your company's reimbursement policy" in await run("/policy", [])
+    assert "joined a company" in await run("/policy", ["will", "I", "get", "a", "refund?"])  # not in a company yet: the tool says so
+    for name in ("join", "claims", "policy"):
+        from app.bot.app import COMMANDS
+        assert name in [c.command for c in COMMANDS]
+
+
+async def test_work_and_personal_commands_keep_the_two_kinds_apart(make_handlers):
+    h = make_handlers(
+        tool_call("add_work_expense", {"items": [{"amount": 450, "category": "cab", "description": "cab to client"}]}),
+        tool_call("add_expenses", {"items": [{"amount": 250, "category": "food", "description": "lunch"}]}),
+    )
+    bot, user = FakeBot(), tg_user(new_telegram_id(), "Kiran")
+    asked = []
+    real_ask = h._ask
+
+    async def spy(tg, chat, text, **kw):
+        asked.append(text)
+        return await real_ask(tg, chat, text, **kw)
+    h._ask = spy
+
+    work = FakeMessage("/work cab 450 to client", private_chat(user.id), user)
+    await h.on_kind_command(update(user, work), context(bot, args=["cab", "450", "to", "client"]))
+    assert asked[-1].startswith("WORK expense") and "cab 450 to client" in asked[-1] and "₹450" in work.sent[-1]["text"]
+
+    personal = FakeMessage("/personal lunch 250", private_chat(user.id), user)
+    await h.on_kind_command(update(user, personal), context(bot, args=["lunch", "250"]))
+    assert asked[-1].startswith("PERSONAL expense") and "add_work_expense" in asked[-1] and "₹250" in personal.sent[-1]["text"]
+
+    bare = FakeMessage("/personal", private_chat(user.id), user)  # no text: says how, asks nothing
+    await h.on_kind_command(update(user, bare), context(bot, args=[]))
+    assert "/personal lunch 250" in bare.sent[-1]["text"] and len(asked) == 2
+    screen = FakeMessage("/work", private_chat(user.id), user)  # no text: the work screen
+    await h.on_kind_command(update(user, screen), context(bot, args=[]))
+    assert "kept apart from your personal spending" in screen.sent[-1]["text"]
+
+    from app.bot.app import COMMANDS
+    assert {"work", "personal"} <= {c.command for c in COMMANDS}
+
+
+async def test_workpdf_sends_a_pdf_of_the_work_expenses(make_handlers):
+    h, bot = make_handlers(), FakeBot()
+    user = tg_user(new_telegram_id(), "Kiran")
+
+    async def run():
+        msg = FakeMessage("/workpdf", private_chat(user.id), user)
+        await h.on_command(update(user, msg), context(bot))
+        return msg.sent[-1]
+
+    assert "haven't logged any work expenses" in (await run())["text"]  # nothing yet: no empty PDF
+    await h.call(h.private(user), "add_work_expense", items=[
+        {"amount": 450, "category": "cab", "description": "cab to client", "has_receipt": True},
+        {"amount": 15000, "category": "hotel", "description": "Pune hotel ₹ stay", "nights": 2},
+    ])
+    sent = await run()
+    assert sent["document"].startswith(b"%PDF") and sent["filename"].startswith("work-expenses-") and "2 expense(s)" in sent["text"]
+    from app.bot.app import COMMANDS
+    assert "workpdf" in [c.command for c in COMMANDS]

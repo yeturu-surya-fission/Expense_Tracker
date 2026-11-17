@@ -37,10 +37,11 @@ def create_app(llm: LLM | None = None, verifier: TokenVerifier | None = None) ->
         background = [asyncio.create_task(notify.webhook_loop())]
         telegram = None
         if settings.telegram_bot_token:
-            from finance_agent.manager.bot import build_application, notifier_loop
+            from finance_agent.manager.bot import MANAGER_COMMANDS, build_application, notifier_loop
             telegram = build_application(ManagerService(llm))
             await telegram.initialize()
             await telegram.start()
+            await telegram.bot.set_my_commands(MANAGER_COMMANDS)  # the "/" menu in the manager's chat
             await telegram.updater.start_polling(drop_pending_updates=False)
             background.append(asyncio.create_task(notifier_loop(telegram.bot)))
             log.info("manager bot is running")

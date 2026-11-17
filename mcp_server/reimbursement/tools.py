@@ -37,6 +37,7 @@ class ClaimAnswer(BaseModel):
     days: int | None = None
     has_receipt: bool | None = None
     preapproved: bool | None = Field(default=None, description="Whether the manager approved it before the user spent it.")
+    variant: str | None = Field(default=None, description="Which case applies, e.g. the city tier, when asked 'Which applies: ...' (use the exact option offered).")
     amount: float | None = Field(default=None, gt=0)
 
 
@@ -110,7 +111,7 @@ async def list_work_expenses(call) -> Out:
         claims = await domain.claims_of(s, call.user_id, 5)
         text = "Nothing is waiting to be claimed." if not waiting else "Waiting to be claimed:\n" + "\n".join(domain.line(w) for w in waiting)
         if claims:
-            text += "\n\nYour claims:\n" + "\n".join(domain.claim_line(c) for c in claims)
+            text += "\n\nYour claims:\n" + "\n".join([await domain.claim_block(s, c) for c in claims])
         total = sum((w.amount for w in waiting), Decimal(0))
     return Out(text, {"waiting": len(waiting), "waiting_total": str(total)})
 
@@ -170,7 +171,17 @@ async def submit_claim(call, title: str | None = None, expense_ids: list[int] | 
     `title` = what the claim is for, e.g. 'Pune trip'."""
     async with session_scope() as s:
         link = await domain.require_link(s, call.user_id)
-        items = await domain.pick_for_claim(s, call.user_id, expense_ids)
+        try:
+            items = await domain.pick_for_claim(s, call.user_id, expense_ids)
+        except ReimbursementError:
+            waiting = None if expense_ids else await domain.waiting_claim(s, call.user_id)
+            if waiting is None:
+                raise
+            # nothing new to send because the expenses are ALREADY in a claim that is waiting for details: say what it needs
+            return Out(
+                f"ℹ️ Your expenses are already in claim #{waiting.id}. It is waiting for details from you:\n{await domain.questions_text(s, waiting)}\n\n"
+                "Just tell me in your own words, e.g. “1 day for all”.", {"claim_id": waiting.id, "status": waiting.status, "needs_info": True},
+            )
         lines = [domain.line(i) for i in items]
         total = sum((i.amount for i in items), Decimal(0))
     if ask_choice(
@@ -184,7 +195,7 @@ async def submit_claim(call, title: str | None = None, expense_ids: list[int] | 
         claim = await domain.create_claim(s, call.user_id, title or "Expense claim", items)
         claim_id, payload_items = claim.id, domain.claim_items_payload(items)
     try:
-        reply = await _a2a(call.user_id, name, "submit_claim", {"company": link.company_code, "title": title or "Expense claim", "items": payload_items}, f"claim: {title or 'expenses'}")
+        reply = await _a2a(call.user_id, name, "submit_claim", {"company": link.company_code, "title": title or "Expense claim", "items": payload_items, "external_no": claim_id}, f"claim: {title or 'expenses'}")
     except ReimbursementError:
         async with session_scope() as s:
             await domain.release_items(s, await domain.claim_of(s, call.user_id, claim_id))
@@ -197,31 +208,50 @@ async def submit_claim(call, title: str | None = None, expense_ids: list[int] | 
         claim.remote_claim_id = int(reply.data["claim_id"])
         claim.status = str(reply.data.get("status", "awaiting_manager"))
         claim.questions = reply.data.get("questions") or None
-    hint = "\n\nReply with the details and I'll pass them on." if reply.state == "input_required" else ""
+    hint = (
+        f"\n\nThis is claim #{claim_id}. Just tell me the details in your own words (for example “1 day for all”) and I'll pass them on."
+        if reply.state == "input_required" else ""
+    )
     return Out(reply.text + hint, {"claim_id": claim_id, "status": claim.status, "needs_info": reply.state == "input_required"})
 
 
 @tool(contexts=("private",), write=True)
-async def claim_answer(call, claim_id: int, details: list[ClaimAnswer] | None = None, text: str | None = None) -> Out:
-    """Give the finance agent what it asked for on a claim (`details`: nights, days, receipt yes/no, approved before spending,
-    amount, per work expense #id), OR reply to a question the manager asked (`text`). claim_id is OUR claim number."""
-    if not details and not (text or "").strip():
-        raise ReimbursementError("Tell me the details (nights, receipt...) or your reply to the manager.")
+async def claim_answer(
+    call, claim_id: int | None = None, days: int | None = None, nights: int | None = None, has_receipt: bool | None = None,
+    preapproved: bool | None = None, variant: str | None = None, details: list[ClaimAnswer] | None = None, text: str | None = None,
+) -> Out:
+    """Give the finance agent what it asked for on a claim, in the user's words. Use it whenever the user answers a claim question
+    like "how many days / nights?", "do you have the receipt?", "was it approved before?", "which city tier?".
+    Set days / nights / has_receipt / preapproved / variant from what they said: it is applied to EVERY open question of that kind
+    ("1 day for all" -> days=1). No claim_id needed: it uses the claim that is waiting for details. Use `details` only when
+    different items get different answers. Use `text` (instead) to reply to a question the user's MANAGER asked."""
+    given = {k: v for k, v in dict(days=days, nights=nights, has_receipt=has_receipt, preapproved=preapproved, variant=variant).items() if v is not None}
+    if not given and not details and not (text or "").strip():
+        raise ReimbursementError("Tell me the details (days, nights, receipt...) or your reply to the manager.")
     async with session_scope() as s:
         link = await domain.require_link(s, call.user_id)
         name = await _who(s, call.user_id)
-        claim = await domain.claim_of(s, call.user_id, claim_id)
+        wants_text = bool((text or "").strip()) and not given and not details
+        claim = await domain.claim_of(s, call.user_id, claim_id) if claim_id else await domain.waiting_claim(s, call.user_id, "info_requested" if wants_text else "needs_info")
+        if claim is None:
+            raise ReimbursementError("You don't have a claim waiting for that. Say “my claims” to see where they stand.")
         if claim.remote_claim_id is None:
             raise ReimbursementError("That claim hasn't reached the finance agent.")
-        remote = claim.remote_claim_id
+        remote, claim_id, questions = claim.remote_claim_id, claim.id, list(claim.questions or [])
+        open_text = await domain.questions_text(s, claim)
     payload: dict = {"company": link.company_code, "claim_id": remote}
-    if details:
-        payload["answers"] = {
-            str(a.item_id): {k: (str(Decimal(str(v))) if k == "amount" else v) for k, v in a.model_dump(exclude={"item_id"}).items() if v is not None}
-            for a in details
-        }
-    else:
+    if wants_text:
         payload["text"] = text.strip()
+    else:
+        answers: dict[str, dict] = {}
+        for q in questions:  # what was said applies to every question of that kind
+            if q.get("key") in given:
+                answers.setdefault(str(int(float(q["ref"]))), {})[q["key"]] = given[q["key"]]
+        for d in details or []:
+            answers.setdefault(str(d.item_id), {}).update({k: (str(Decimal(str(v))) if k == "amount" else v) for k, v in d.model_dump(exclude={"item_id"}).items() if v is not None})
+        if not answers:
+            raise ReimbursementError("That doesn't answer what the claim is waiting for." + (f" It needs:\n{open_text}" if open_text else ""))
+        payload["answers"] = answers
     reply = await _a2a(call.user_id, name, "claim_reply", payload, text or "details")
     async with session_scope() as s:
         claim = await domain.claim_of(s, call.user_id, claim_id)
@@ -250,7 +280,7 @@ async def my_claims(call, claim_id: int | None = None) -> Out:
                         claim.approved_amount = Decimal(str(reply.data["approved_amount"]))
     async with session_scope() as s:
         claims = await domain.claims_of(s, call.user_id)
-        text = "You haven't sent any claims yet." if not claims else "Your claims:\n" + "\n".join(domain.claim_line(c) for c in claims)
+        text = "You haven't sent any claims yet." if not claims else "Your claims:\n" + "\n".join([await domain.claim_block(s, c) for c in claims])
     return Out(text, {"claims": len(claims)})
 
 
@@ -267,6 +297,20 @@ async def reimburse_view(call) -> Out:
         parts = [head, "These are kept apart from your personal spending."]
         parts.append(f"Waiting to be claimed: {len(waiting)} item(s), {money(total)}" + ("\n" + "\n".join(domain.line(w) for w in waiting[:8]) if waiting else ""))
         if claims:
-            parts.append("Claims:\n" + "\n".join(domain.claim_line(c) for c in claims))
+            parts.append("Claims:\n" + "\n".join([await domain.claim_block(s, c) for c in claims]))
         parts.append("Try: “work expense: cab 450 to client office”, “will I get a refund on a hotel room?”, “send my claim”.")
     return Out("\n\n".join(parts), {"linked": link is not None, "waiting": len(waiting), "claims": len(claims)})
+
+
+@tool(contexts=("private",))
+async def work_report(call) -> Out:
+    """Everything the user logged as a WORK expense, with the claim each one is in and what was approved for it (for the /workpdf report)."""
+    async with session_scope() as s:
+        link = await domain.link_of(s, call.user_id)
+        name = await _who(s, call.user_id)
+        rows = await domain.report_rows(s, call.user_id)
+    total = sum((Decimal(r["amount"]) for r in rows), Decimal(0))
+    return Out(
+        f"📄 Work expense report: {len(rows)} expense(s), {money(total)}.",
+        {"name": name, "company": link.company_name if link else None, "rows": rows, "total": str(total)},
+    )
