@@ -5,6 +5,20 @@ friends and trip groups, Splitwise style, all inside Telegram.
 
 There are **no bank or cash accounts**: "spent 300 on ice cream" simply adds ₹300 to your expenses.
 
+## See it working
+
+| Personal chat | |
+|---|---|
+| ![Personal chat demo](assets/gif/personal-chat.gif) | ![Personal chat 1](assets/img/personal-chat-1.png) ![Personal chat 2](assets/img/personal-chat-2.png) |
+
+| Group chat | |
+|---|---|
+| ![Group chat demo](assets/gif/group-chat.gif) | ![Group chat](assets/img/group-chat.png) |
+
+**Company manager reimbursement scenario**
+
+![Manager reimbursement](assets/img/manager-reimbursement.png)
+
 ## What it does
 
 | | |
@@ -117,6 +131,86 @@ adds the bot to some other group, it leaves. Group members cannot add the bot to
 
 ## Architecture
 
+## System architecture
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Segoe UI, Helvetica, Arial","fontSize":"16px","primaryColor":"#f1f5f9","primaryBorderColor":"#475569","lineColor":"#334155"}}}%%
+flowchart LR
+    subgraph TG["Telegram"]
+        direction TB
+        PC["Private chats"]
+        GC["Group chats"]
+        MB["Manager bot"]
+    end
+    subgraph BOT["Telegram bot (app/)"]
+        direction TB
+        BL["Bot layer<br/>handlers, buttons, PDF upload"]
+        RU["Runner<br/>pause and resume"]
+        AG["LangGraph agent<br/>agent, tools, respond"]
+        MC["MCP client<br/>short-lived token + HTTP"]
+        BL --> RU --> AG --> MC
+    end
+    subgraph MCP["MCP server (mcp_server/)"]
+        direction TB
+        AU["Auth<br/>RS256 JWT, rate limit, audit"]
+        TL["Tools<br/>scope + context gate"]
+        DM["Domain, no LLM<br/>expenses, budgets, splits, debts"]
+        OB["Outbox, reminders,<br/>A2A client"]
+        AU --> TL --> DM --> OB
+    end
+    subgraph FIN["Finance Agent (finance_agent/)"]
+        direction TB
+        A2["A2A server<br/>agent card, skills"]
+        PO["Policy parser + QA"]
+        EN["Policy engine<br/>exact decimals"]
+        A2 --> PO --> EN
+    end
+    LLM["CodeVector LLM gateway"]
+    D1[("Postgres<br/>agent memory")]
+    D2[("Postgres<br/>expense data")]
+    D3[("Postgres<br/>policy + claims")]
+    PC & GC <--> BL
+    MB <--> A2
+    MC ==>|"HTTP + Bearer"| AU
+    OB ==>|"A2A + signed token"| A2
+    A2 -.->|"HMAC webhook"| OB
+    AG --> LLM
+    PO --> LLM
+    AG --> D1
+    DM --> D2
+    EN --> D3
+    classDef bot fill:#f1f5f9,stroke:#475569,color:#0f172a
+    classDef mcp fill:#ecfdf5,stroke:#0f766e,color:#0f172a
+    classDef fin fill:#fef3c7,stroke:#b45309,color:#0f172a
+    class BL,RU,AG,MC bot
+    class AU,TL,DM,OB mcp
+    class A2,PO,EN fin
+```
+
+### Reimbursement claim journey (A2A)
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Segoe UI, Helvetica, Arial","fontSize":"15px","actorBkg":"#e0f2fe","actorBorder":"#0284c7","signalColor":"#334155","noteBkgColor":"#fffbeb","noteBorderColor":"#b45309"}}}%%
+sequenceDiagram
+    autonumber
+    actor E as Employee
+    participant T as Expense bot + MCP server
+    participant F as Finance Agent
+    actor M as Manager
+    E->>T: work expense: hotel 15000
+    T->>F: A2A check_expense (2-min RS256 token)
+    F-->>T: needs nights and receipt
+    T-->>E: How many nights? Send the receipt
+    E->>T: 2 nights + receipt photo
+    E->>T: send my claim
+    T->>F: A2A submit_claim + receipts
+    Note over F: Policy engine<br/>2 nights x 6,000 = 12,000
+    F->>M: claim card: Approve / Reject / Edit / Ask
+    M->>F: Approve
+    F-->>T: signed webhook (HMAC), retried until accepted
+    T-->>E: Claim approved: 12,450
+```
+
 Two services that only talk over HTTP. The **MCP server** owns the tools, the logic, the database and the authentication; the **Telegram bot**
 owns Telegram and the AI, and can reach expense data **only** through MCP requests carrying a token the server issued.
 
@@ -208,6 +302,20 @@ scratch databases (the finance tests drop and recreate their tables), then `pyte
 - Outside AI apps need a service credential from the operator for now; "Sign in with Telegram" (OAuth) is the next step, see [docs/MCP.md](docs/MCP.md#8-not-done-yet-sign-in-for-people-outside-telegram).
 - Debts already marked "paid" are not netted, and the money owed to you can only be confirmed after the other person marks it paid.
 - Work reimbursements: receipts are a yes/no answer (no photo reading yet), one company per person, and "paid" is marked by the manager. More in [docs/REIMBURSEMENT.md](docs/REIMBURSEMENT.md#limits-today).
+
+## Story, blogs and gists
+- 🌱 [Origin story](docs/ORIGIN_STORY.md): how five Python interns at Fission Labs went from a shared chai tab to a multi-agent system
+- ✍️ Blogs: [Fission Labs style](docs/blog/fissionlabs-style.md) · [Medium style](docs/blog/medium-style.md)
+- 🧩 Code gists ([sources](docs/gists/README.md)):
+
+| Gist | Idea |
+|---|---|
+| Architecture boundary test | Architecture rules that fail CI |
+| Pooled policy caps | The model reads the policy, code does the sums |
+| Signed webhook | HMAC-signed, retried, idempotent decisions |
+
+## Team
+Built by five Python interns at Fission Labs.
 
 ## More documentation
 - 🏗️ [Architecture](docs/ARCHITECTURE.md): the two services, tokens, chat contexts, agent graph, outbox, data model, deployment, safety

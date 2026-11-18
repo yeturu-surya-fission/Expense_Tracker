@@ -1,0 +1,51 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Segoe UI, Helvetica, Arial","fontSize":"16px","primaryColor":"#f1f5f9","primaryBorderColor":"#475569","lineColor":"#334155"}}}%%
+flowchart LR
+    subgraph TG["Telegram"]
+        direction TB
+        PC["Private chats"]
+        GC["Group chats"]
+        MB["Manager bot"]
+    end
+    subgraph BOT["Telegram bot (app/)"]
+        direction TB
+        BL["Bot layer<br/>handlers, buttons, PDF upload"]
+        RU["Runner<br/>pause and resume"]
+        AG["LangGraph agent<br/>agent, tools, respond"]
+        MC["MCP client<br/>short-lived token + HTTP"]
+        BL --> RU --> AG --> MC
+    end
+    subgraph MCP["MCP server (mcp_server/)"]
+        direction TB
+        AU["Auth<br/>RS256 JWT, rate limit, audit"]
+        TL["Tools<br/>scope + context gate"]
+        DM["Domain, no LLM<br/>expenses, budgets, splits, debts"]
+        OB["Outbox, reminders,<br/>A2A client"]
+        AU --> TL --> DM --> OB
+    end
+    subgraph FIN["Finance Agent (finance_agent/)"]
+        direction TB
+        A2["A2A server<br/>agent card, skills"]
+        PO["Policy parser + QA"]
+        EN["Policy engine<br/>exact decimals"]
+        A2 --> PO --> EN
+    end
+    LLM["CodeVector LLM gateway"]
+    D1[("Postgres<br/>agent memory")]
+    D2[("Postgres<br/>expense data")]
+    D3[("Postgres<br/>policy + claims")]
+    PC & GC <--> BL
+    MB <--> A2
+    MC ==>|"HTTP + Bearer"| AU
+    OB ==>|"A2A + signed token"| A2
+    A2 -.->|"HMAC webhook"| OB
+    AG --> LLM
+    PO --> LLM
+    AG --> D1
+    DM --> D2
+    EN --> D3
+    classDef bot fill:#f1f5f9,stroke:#475569,color:#0f172a
+    classDef mcp fill:#ecfdf5,stroke:#0f766e,color:#0f172a
+    classDef fin fill:#fef3c7,stroke:#b45309,color:#0f172a
+    class BL,RU,AG,MC bot
+    class AU,TL,DM,OB mcp
+    class A2,PO,EN fin

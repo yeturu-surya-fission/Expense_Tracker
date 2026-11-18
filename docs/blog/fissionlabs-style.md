@@ -1,6 +1,60 @@
 # Letting Two AI Agents Talk Money: Work Reimbursements Over A2A, MCP and Telegram
 
-*Fission Labs · Engineering*
+*Fission Labs · Engineering · by the Python intern team*
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Segoe UI, Helvetica, Arial","fontSize":"16px","primaryColor":"#f1f5f9","primaryBorderColor":"#475569","lineColor":"#334155"}}}%%
+flowchart LR
+    subgraph TG["Telegram"]
+        direction TB
+        PC["Private chats"]
+        GC["Group chats"]
+        MB["Manager bot"]
+    end
+    subgraph BOT["Telegram bot (app/)"]
+        direction TB
+        BL["Bot layer<br/>handlers, buttons, PDF upload"]
+        RU["Runner<br/>pause and resume"]
+        AG["LangGraph agent<br/>agent, tools, respond"]
+        MC["MCP client<br/>short-lived token + HTTP"]
+        BL --> RU --> AG --> MC
+    end
+    subgraph MCP["MCP server (mcp_server/)"]
+        direction TB
+        AU["Auth<br/>RS256 JWT, rate limit, audit"]
+        TL["Tools<br/>scope + context gate"]
+        DM["Domain, no LLM<br/>expenses, budgets, splits, debts"]
+        OB["Outbox, reminders,<br/>A2A client"]
+        AU --> TL --> DM --> OB
+    end
+    subgraph FIN["Finance Agent (finance_agent/)"]
+        direction TB
+        A2["A2A server<br/>agent card, skills"]
+        PO["Policy parser + QA"]
+        EN["Policy engine<br/>exact decimals"]
+        A2 --> PO --> EN
+    end
+    LLM["CodeVector LLM gateway"]
+    D1[("Postgres<br/>agent memory")]
+    D2[("Postgres<br/>expense data")]
+    D3[("Postgres<br/>policy + claims")]
+    PC & GC <--> BL
+    MB <--> A2
+    MC ==>|"HTTP + Bearer"| AU
+    OB ==>|"A2A + signed token"| A2
+    A2 -.->|"HMAC webhook"| OB
+    AG --> LLM
+    PO --> LLM
+    AG --> D1
+    DM --> D2
+    EN --> D3
+    classDef bot fill:#f1f5f9,stroke:#475569,color:#0f172a
+    classDef mcp fill:#ecfdf5,stroke:#0f766e,color:#0f172a
+    classDef fin fill:#fef3c7,stroke:#b45309,color:#0f172a
+    class BL,RU,AG,MC bot
+    class AU,TL,DM,OB mcp
+    class A2,PO,EN fin
+```
 
 Picture an employee who types "cab 450 to the client" into a chat window on a Tuesday night. A week later a manager is looking at a card that says the hotel claim is "partly eligible, ₹12,000 of ₹15,000", with the rule that caused the cut and the version of the policy it came from. Between those two moments, two separate AI agents, two databases, two Telegram bots and a handful of signed tokens have exchanged messages, and not one rupee was calculated by a language model.
 
@@ -37,6 +91,28 @@ The two services speak **A2A**, the Agent2Agent protocol. The Finance Agent publ
 Trust runs both ways, and it is asymmetric on purpose. Calls from tracker to Finance carry a two-minute RS256 token that names the employee, so it is the tracker, not the employee, vouching for who is asking. The Finance Agent checks the signature against the tracker's published keys, the issuer, the audience and the scope. In the other direction, the manager's decisions return as a signed webhook with an HMAC over the body. Approval can take days, which is far too long to hold a task open, so the Finance Agent stores each event until the tracker accepts it, retries with back-off, and the tracker ignores duplicates.
 
 ## Reading a policy without trusting the reader
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Segoe UI, Helvetica, Arial","fontSize":"15px","actorBkg":"#e0f2fe","actorBorder":"#0284c7","signalColor":"#334155","noteBkgColor":"#fffbeb","noteBorderColor":"#b45309"}}}%%
+sequenceDiagram
+    autonumber
+    actor E as Employee
+    participant T as Expense bot + MCP server
+    participant F as Finance Agent
+    actor M as Manager
+    E->>T: work expense: hotel 15000
+    T->>F: A2A check_expense (2-min RS256 token)
+    F-->>T: needs nights and receipt
+    T-->>E: How many nights? Send the receipt
+    E->>T: 2 nights + receipt photo
+    E->>T: send my claim
+    T->>F: A2A submit_claim + receipts
+    Note over F: Policy engine<br/>2 nights x 6,000 = 12,000
+    F->>M: claim card: Approve / Reject / Edit / Ask
+    M->>F: Approve
+    F-->>T: signed webhook (HMAC), retried until accepted
+    T-->>E: Claim approved: 12,450
+```
 
 A manager pastes a policy, or sends a PDF. The agent reads it and replies with how it understood it: hotels up to ₹6,000 a night with a receipt above ₹500, meals up to ₹1,000 a day, gym not reimbursed. Nothing is saved until the manager taps Save, and every save is a new version, with each claim recording the version it was checked against.
 

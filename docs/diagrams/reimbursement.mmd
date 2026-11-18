@@ -1,0 +1,19 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Segoe UI, Helvetica, Arial","fontSize":"15px","actorBkg":"#e0f2fe","actorBorder":"#0284c7","signalColor":"#334155","noteBkgColor":"#fffbeb","noteBorderColor":"#b45309"}}}%%
+sequenceDiagram
+    autonumber
+    actor E as Employee
+    participant T as Expense bot + MCP server
+    participant F as Finance Agent
+    actor M as Manager
+    E->>T: work expense: hotel 15000
+    T->>F: A2A check_expense (2-min RS256 token)
+    F-->>T: needs nights and receipt
+    T-->>E: How many nights? Send the receipt
+    E->>T: 2 nights + receipt photo
+    E->>T: send my claim
+    T->>F: A2A submit_claim + receipts
+    Note over F: Policy engine<br/>2 nights x 6,000 = 12,000
+    F->>M: claim card: Approve / Reject / Edit / Ask
+    M->>F: Approve
+    F-->>T: signed webhook (HMAC), retried until accepted
+    T-->>E: Claim approved: 12,450
