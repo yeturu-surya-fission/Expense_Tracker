@@ -23,7 +23,7 @@ from finance_agent.db.models import Company, Employee, ManagerState, PolicyQuest
 from finance_agent.db.session import session_scope
 from finance_agent.formatting import money
 from finance_agent.llm import LLM
-from finance_agent.manager import decision
+from finance_agent.manager import chat, decision
 from finance_agent.policy import parser, store
 from finance_agent.policy.models import Rule
 
@@ -334,8 +334,11 @@ class ManagerService:
             current = await store.current(s, company.id)
             if mode not in ("draft_policy", "awaiting_edit", "awaiting_policy", "retry_policy"):
                 # The manager is only chatting. The policy changes ONLY through /setpolicy or /editpolicy (and then Save), never from a stray message.
-                return Reply(self.CHAT_HINT if current else self.NO_POLICY_HINT)
-            if mode == "draft_policy":  # the manager is correcting the draft they were just shown
+                if current is None:
+                    return Reply(self.NO_POLICY_HINT)
+                chat_facts = await self._facts(s, company, current)
+                job = None
+            elif mode == "draft_policy":  # the manager is correcting the draft they were just shown
                 job = dict(kind="edit", base=[Rule.model_validate(r) for r in payload["rules"]], replace=False)
             elif mode == "awaiting_edit":
                 job = dict(kind="edit", base=None, replace=False)
@@ -347,6 +350,8 @@ class ManagerService:
                 job = dict(kind="parse", base=None, replace=replace)
             if mode in ("awaiting_policy", "awaiting_edit"):
                 await self._set(s, tg, None)
+        if job is None:  # just chatting: a short answer (the model is asked after the transaction is closed)
+            return Reply(await chat.reply(self.llm, tg, company.name, chat_facts, text, self.CHAT_HINT))
         return await self._run_policy(company.id, tg, text=text, progress=progress, **job)
 
     async def _claim_input(self, s: AsyncSession, company: Company, tg: int, mode: str, payload: dict, text: str) -> Reply:
@@ -442,6 +447,16 @@ class ManagerService:
         mode, prompt = prompts[action]
         await self._set(s, tg, mode, {"claim_id": claim.id})
         return Reply(prompt)
+
+    async def _facts(self, s: AsyncSession, company: Company, current) -> str:
+        """What the chat answer may use: this company's policy and a few counts. Nothing else is sent to the model."""
+        version, rules = current
+        waiting = await claims.pending_for(s, company.id)
+        staff = len((await s.execute(select(Employee.id).where(Employee.company_id == company.id))).scalars().all())
+        return (
+            f"POLICY v{version}:\n{parser.rules_text(rules)}\n\nEmployees: {staff}. Claims waiting for the manager: {len(waiting)}"
+            + "".join(f"\n- claim #{c.id} from {e.name}: {c.title}, {money(texts.claimed_total(c))} claimed" for c, e in waiting[:5])
+        )
 
     # ------------------------------------------------------------------ own amounts, expense by expense
     async def _start_items(self, s: AsyncSession, tg: int, claim) -> Reply:

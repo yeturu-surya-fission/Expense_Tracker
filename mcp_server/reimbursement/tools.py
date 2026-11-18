@@ -83,14 +83,101 @@ async def add_work_expense(call, items: list[WorkItem]) -> Out:
                 s, call.user_id, i.amount, i.category, i.description, i.date, nights=i.nights, days=i.days, has_receipt=i.has_receipt, purpose=i.purpose,
             ) for i in items
         ]
-        lines = [domain.line(r) for r in rows]
         ids = [r.id for r in rows]
+        linked = await domain.link_of(s, call.user_id)
+    await _check_rows(call.user_id, ids)  # what does the policy need for these? (receipt, nights, days...) asked now, not when the claim is sent
+    async with session_scope() as s:
+        rows = await domain.expenses_by_id(s, call.user_id, ids)
+        lines = [domain.line(r) for r in rows]
+        needs = await domain.needs_text(s, rows)
         waiting = await domain.unclaimed(s, call.user_id)
     total = sum((w.amount for w in waiting), Decimal(0))
-    return Out(
-        "🧾 Saved as work expense:\n" + "\n".join(lines) + f"\n\nWaiting to be claimed: {len(waiting)} item(s), {money(total)}. Say “send my claim” when you're ready.",
-        {"work_expense_ids": ids},
-    )
+    text = "🧾 Saved as work expense:\n" + "\n".join(lines)
+    if needs:
+        text += "\n\nThe company policy needs this for your claim:\n" + needs
+    else:
+        text += f"\n\nWaiting to be claimed: {len(waiting)} item(s), {money(total)}. Say “send my claim” when you're ready."
+    return Out(text, {"work_expense_ids": ids, "needs_input": bool(needs), "joined": linked is not None})
+
+
+async def _check_rows(uid: int, expense_ids: list[int]) -> None:
+    """Ask the finance agent what each of these work expenses needs, and remember it. If the person hasn't joined a company, or the
+    finance agent is down, nothing is asked now: the claim check at the end still asks for whatever is missing."""
+    async with session_scope() as s:
+        link = await domain.link_of(s, uid)
+        if link is None:
+            return
+        name, code = await _who(s, uid), link.company_code
+        payloads = {r.id: domain.item_payload(r) for r in await domain.expenses_by_id(s, uid, expense_ids)}
+    results = {}
+    for eid, item in payloads.items():
+        try:
+            reply = await _a2a(uid, name, "check_expense", {"company": code, "item": item}, "check expense")
+        except ReimbursementError:
+            return
+        if reply.state == "completed" and reply.data.get("checked"):
+            results[eid] = reply.data
+    async with session_scope() as s:
+        for r in await domain.expenses_by_id(s, uid, list(results)):
+            domain.apply_check(r, results[r.id])
+
+
+@tool(contexts=("private",), write=True)
+async def expense_details(
+    call, expense_id: int | None = None, nights: int | None = None, days: int | None = None, has_receipt: bool | None = None,
+    preapproved: bool | None = None, variant: str | None = None,
+) -> Out:
+    """Give the details the policy asked for about a work expense that hasn't been claimed yet ("2 nights", "1 day", "yes it was approved",
+    "Tier-1", or "no receipt" -> has_receipt=false). Applies to EVERY waiting expense that asked that question. No expense_id needed.
+    The receipt itself is a photo or PDF the user sends, never typed."""
+    given = {k: v for k, v in dict(nights=nights, days=days, has_receipt=has_receipt, preapproved=preapproved, variant=variant).items() if v is not None}
+    if not given:
+        raise ReimbursementError("Tell me the detail (nights, days, approved or not, city tier, or “no receipt”).")
+    async with session_scope() as s:
+        await domain.require_link(s, call.user_id)
+        rows = [r for r in await domain.unclaimed(s, call.user_id) if expense_id is None or r.id == expense_id]
+        have = await domain.receipt_ids(s, [r.id for r in rows])
+        changed: list[int] = []
+        for r in rows:
+            asked = {q["key"] for q in r.open_questions or []}
+            for key in domain.ANSWER_FIELDS:
+                if key in given and (key in asked or expense_id is not None):
+                    setattr(r, key, given[key])
+                    changed.append(r.id)
+            if given.get("has_receipt") is False and domain.lacks_receipt(r, have):
+                r.has_receipt = False  # they have none: the claim will say so and the manager decides
+                changed.append(r.id)
+        if not changed:
+            needs = await domain.needs_text(s, await domain.unfinished(s, call.user_id))
+            if given.get("has_receipt") and needs:
+                raise ReimbursementError("Please send the receipt itself, as a photo or PDF in this chat.\n" + needs)
+            raise ReimbursementError("None of your waiting expenses asked for that." + (f" They need:\n{needs}" if needs else ""))
+        ids = sorted(set(changed))
+    await _check_rows(call.user_id, ids)  # may have more to ask now (e.g. the city tier, then nothing)
+    async with session_scope() as s:
+        left = await domain.needs_text(s, await domain.unfinished(s, call.user_id))
+    return Out("✅ Noted." + (f" Still needed:\n{left}" if left else " That's everything. Say “send my claim” when you're ready."), {"needs_input": bool(left)})
+
+
+@tool(contexts=("private",), write=True)
+async def attach_receipt(call, file_base64: str, filename: str = "receipt", content_type: str = "image/jpeg", expense_id: int | None = None, if_waiting: bool = False) -> Out:
+    """Keep a receipt (photo or PDF the user just sent) with a work expense. Without expense_id it goes to the latest expense
+    waiting for a receipt. if_waiting=true: do nothing (attached=false) when no expense is waiting for one."""
+    import base64
+    import binascii
+    try:
+        data = base64.b64decode(file_base64, validate=True)
+    except (binascii.Error, ValueError):
+        raise ReimbursementError("I couldn't read that file.") from None
+    async with session_scope() as s:
+        exp = await domain.attach_receipt(s, call.user_id, expense_id, filename, content_type, data)
+        if exp is None:
+            if if_waiting:
+                return Out("", {"attached": False})
+            raise ReimbursementError("None of your work expenses is waiting for a receipt. Add the expense first, e.g. “work expense: flight 3000”.")
+        left = await domain.needs_text(s, await domain.unfinished(s, call.user_id))
+        saved = f"📎 Receipt saved with #{exp.id} {exp.description} ({money(exp.amount)}). It goes to your manager with the claim."
+    return Out(saved + (f"\n\nStill needed:\n{left}" if left else "\n\nThat's everything. Say “send my claim” when you're ready."), {"attached": True, "expense_id": exp.id, "needs_input": bool(left)})
 
 
 @tool(contexts=("private",), write=True)
@@ -182,6 +269,10 @@ async def submit_claim(call, title: str | None = None, expense_ids: list[int] | 
                 f"ℹ️ Your expenses are already in claim #{waiting.id}. It is waiting for details from you:\n{await domain.questions_text(s, waiting)}\n\n"
                 "Just tell me in your own words, e.g. “1 day for all”.", {"claim_id": waiting.id, "status": waiting.status, "needs_info": True},
             )
+        have = await domain.receipt_ids(s, [i.id for i in items])
+        blocked = [i for i in items if i.open_questions or domain.lacks_receipt(i, have)]
+        if blocked:  # the policy's questions are asked when an expense is added: don't send a claim that is still missing them
+            raise ReimbursementError("Before I can send your claim, the policy needs:\n" + await domain.needs_text(s, blocked))
         lines = [domain.line(i) for i in items]
         total = sum((i.amount for i in items), Decimal(0))
     if ask_choice(
@@ -194,8 +285,12 @@ async def submit_claim(call, title: str | None = None, expense_ids: list[int] | 
         items = await domain.pick_for_claim(s, call.user_id, [i.id for i in items])
         claim = await domain.create_claim(s, call.user_id, title or "Expense claim", items)
         claim_id, payload_items = claim.id, domain.claim_items_payload(items)
+        files = await domain.receipts_payload(s, [i.id for i in items])  # the receipts go to the manager with the claim
     try:
-        reply = await _a2a(call.user_id, name, "submit_claim", {"company": link.company_code, "title": title or "Expense claim", "items": payload_items, "external_no": claim_id}, f"claim: {title or 'expenses'}")
+        reply = await _a2a(
+            call.user_id, name, "submit_claim",
+            {"company": link.company_code, "title": title or "Expense claim", "items": payload_items, "external_no": claim_id, "receipts": files}, f"claim: {title or 'expenses'}",
+        )
     except ReimbursementError:
         async with session_scope() as s:
             await domain.release_items(s, await domain.claim_of(s, call.user_id, claim_id))

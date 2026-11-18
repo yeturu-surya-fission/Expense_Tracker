@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from finance_agent import outbox
-from finance_agent.claims import review, texts
+from finance_agent.claims import receipts, review, texts
 from finance_agent.db.models import Claim, Company, Employee
 from finance_agent.formatting import money, q2
 from finance_agent.llm import LLM
@@ -111,17 +111,27 @@ async def _evaluate(session: AsyncSession, llm: LLM | None, claim: Claim) -> boo
 
 async def _hand_to_manager(session: AsyncSession, claim: Claim, emp: Employee, company: Company) -> None:
     claim.status = "awaiting_manager"
-    await outbox.to_manager(session, company.manager_telegram_id, texts.manager_card(claim, emp.name), texts.manager_buttons(claim, emp.name))
+    files = await receipts.of(session, claim.id)
+    card = texts.manager_card(claim, emp.name) + (f"\n📎 {len(files)} receipt file(s) attached below for you to check." if files else "")
+    await outbox.to_manager(session, company.manager_telegram_id, card, texts.manager_buttons(claim, emp.name), claim_id=claim.id if files else None)
 
 
-async def submit(session: AsyncSession, llm: LLM | None, company: Company, emp: Employee, title: str, raw_items: list[dict], external_no: int | None = None) -> Claim:
+async def submit(
+    session: AsyncSession, llm: LLM | None, company: Company, emp: Employee, title: str, raw_items: list[dict], external_no: int | None = None,
+    raw_receipts: list[dict] | None = None,
+) -> Claim:
     items = _parse_items(raw_items)
+    try:
+        files = receipts.decode(raw_receipts or [], {i.ref for i in items})
+    except receipts.ReceiptError as e:
+        raise ClaimError(str(e)) from e
     claim = Claim(
         company_id=company.id, employee_id=emp.id, title=(title or "Expense claim").strip()[:160], items=[i.model_dump(mode="json") for i in items],
         verdicts=[], policy_version=0, thread=[], external_no=external_no,
     )
     session.add(claim)
     await session.flush()
+    await receipts.save(session, claim.id, files)
     ready = await _evaluate(session, llm, claim)
     if ready:
         await _hand_to_manager(session, claim, emp, company)

@@ -23,6 +23,9 @@ class StatementMixin(BotBase):
             return
         msg, doc = update.effective_message, update.effective_message.document
         is_pdf = doc.mime_type == "application/pdf" or (doc.file_name or "").lower().endswith(".pdf")
+        kind = "application/pdf" if is_pdf else (doc.mime_type or "")
+        if (is_pdf or kind.startswith("image/")) and await self._try_receipt(update, doc, doc.file_name or "receipt", kind, if_waiting=True):
+            return  # a work expense was waiting for its receipt: this file is it, not a bank statement
         if not is_pdf:
             await msg.reply_text("📄 I can only read PDF bank statements. Please send a PDF.")
             return
@@ -64,8 +67,13 @@ class StatementMixin(BotBase):
             await status.edit_text("😵 Sorry, I couldn't process that statement. Please try again.")
 
     async def on_other_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if await self._guard(update):
-            await update.effective_message.reply_text("📄 I can only read PDF bank statements. Please send a PDF.")
+        """A photo: the receipt of the work expense that is waiting for one."""
+        if not await self._guard(update):
+            return
+        photos = update.effective_message.photo
+        if photos and await self._try_receipt(update, photos[-1], "receipt.jpg", "image/jpeg", if_waiting=True):
+            return
+        await update.effective_message.reply_text("📷 I got your photo, but none of your work expenses is waiting for a receipt. Add the expense first, e.g. “work expense: flight 3000”. (I can only read PDF bank statements otherwise.)")
 
     async def _import_action(self, q, tg: TgUser, arg: str) -> None:
         raw_id, _, mode = arg.partition(":")

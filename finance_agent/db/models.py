@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -110,6 +110,19 @@ class ManagerState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class ClaimReceipt(Base):
+    """A receipt file (photo or PDF) the employee attached to one item of a claim, kept so the manager can check it."""
+
+    __tablename__ = "claim_receipts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claims.id", ondelete="CASCADE"), index=True)
+    item_ref: Mapped[int] = mapped_column(Integer)
+    filename: Mapped[str] = mapped_column(String(120))
+    content_type: Mapped[str] = mapped_column(String(60))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+
+
 class Notification(Base):
     """A message waiting to be sent to the manager (written in the same transaction as the data; a loop delivers it)."""
 
@@ -121,6 +134,7 @@ class Notification(Base):
     buttons: Mapped[list | None] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String(12), default="pending", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
+    claim_id: Mapped[int | None] = mapped_column(Integer)  # when set, the claim's receipt files are sent right after this message
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -27,6 +27,21 @@ ASK_HINT = (
 
 
 class ReimburseMixin(BotBase):
+    async def _try_receipt(self, update, tg_file, filename: str, content_type: str, *, if_waiting: bool) -> bool:
+        """A photo or PDF the person sent: if a work expense is waiting for its receipt, keep it with that expense. Returns True if it was used."""
+        import base64
+        msg = update.effective_message
+        if tg_file.file_size and tg_file.file_size > 5 * 1024 * 1024:
+            if not if_waiting:
+                await msg.reply_text("📎 That file is bigger than 5 MB. Please send a smaller photo or PDF.")
+            return not if_waiting
+        data = bytes(await (await tg_file.get_file()).download_as_bytearray())
+        res = await self.call(self.private(update.effective_user), "attach_receipt", file_base64=base64.b64encode(data).decode(), filename=filename, content_type=content_type, if_waiting=if_waiting)
+        if res.ok and res.data.get("attached") is False:
+            return False
+        await msg.reply_text(res.message)
+        return True
+
     async def _reimburse_home(self, tg: TgUser, message) -> None:
         res = await self.call(self.private(tg), "reimburse_view")
         await message.reply_text(res.message, reply_markup=kb.reimburse_keyboard(res.data))

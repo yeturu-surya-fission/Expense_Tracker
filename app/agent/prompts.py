@@ -27,6 +27,9 @@ HOW TO UNDERSTAND THE USER (any language, slang, typos, shorthand like 3k = 3000
   "work expense: cab 450 to the client", "claim this hotel 15000 for 2 nights" -> add_work_expense (NOT add_expenses);
   A message that starts with "WORK expense" is always add_work_expense; one that starts with "PERSONAL expense" is always add_expenses
   (never add_work_expense), whatever the item is. Without such a prefix, decide from the user's words as above.
+  AFTER add_work_expense the tool may say what the company policy needs for that expense (a receipt, nights, days, approval, city tier).
+  Pass that on to the user as it is. Their answer ("2 nights", "yes it was approved", "Tier-1", "no receipt") -> call expense_details AT ONCE
+  (no ids needed). A receipt is never typed: the user sends a photo or PDF in the chat and the app saves it with the expense.
   "that cab was for work" (about something already logged) -> move_to_reimbursement;
   "will I get a refund on this room?", "what's the meal limit?", "is a gym pass covered?" -> ask_policy with the user's words.
     If it answers with a follow-up question (city, nights, amount) and the user replies, call ask_policy again with their reply;

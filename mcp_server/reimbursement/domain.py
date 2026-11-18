@@ -2,6 +2,7 @@
 Work reimbursements: the person's work expenses, the claims they send, and what comes back. No A2A and no Telegram here:
 tools.py talks to the Finance Agent and calls these functions to keep our own records.
 """
+import base64
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -13,7 +14,7 @@ from mcp_server.domain.errors import UserError
 from mcp_server.domain.expenses import normalize_category, to_decimal
 from mcp_server.domain.formatting import money
 from mcp_server.domain.periods import now_local, parse_when
-from mcp_server.reimbursement.models import CompanyLink, PolicyChat, WorkClaim, WorkExpense
+from mcp_server.reimbursement.models import CompanyLink, PolicyChat, WorkClaim, WorkExpense, WorkReceipt
 
 OPEN_STATUSES = ("needs_info", "awaiting_manager", "info_requested", "approved")
 
@@ -103,7 +104,7 @@ async def remove(session: AsyncSession, user_id: int, expense_id: int) -> WorkEx
 
 def line(e: WorkExpense) -> str:
     extra = ", ".join(x for x in (f"{e.nights} night{'s' if e.nights != 1 else ''}" if e.nights else "", f"{e.days} day{'s' if e.days != 1 else ''}" if e.days else "",
-                                  "receipt ✓" if e.has_receipt else ("no receipt" if e.has_receipt is False else "")) if x)
+                                  "receipt ✓" if e.has_receipt else ("no receipt" if e.has_receipt is False else ("receipt needed" if e.needs_receipt else ""))) if x)
     return f"#{e.id} {e.description}: {money(e.amount)}" + (f" ({extra})" if extra else "")
 
 
@@ -131,13 +132,88 @@ async def create_claim(session: AsyncSession, user_id: int, title: str, items: l
 
 
 def claim_items_payload(items: list[WorkExpense]) -> list[dict]:
-    return [
-        {
-            "ref": i.id, "category": i.category, "description": i.description, "amount": str(i.amount), "date": i.spent_on.isoformat(),
-            "nights": i.nights, "days": i.days, "has_receipt": i.has_receipt, "purpose": i.purpose,
-        }
-        for i in items
-    ]
+    return [item_payload(i) for i in items]
+
+
+def item_payload(i: WorkExpense) -> dict:
+    return {
+        "ref": i.id, "category": i.category, "description": i.description, "amount": str(i.amount), "date": i.spent_on.isoformat(),
+        "nights": i.nights, "days": i.days, "has_receipt": i.has_receipt, "purpose": i.purpose, "preapproved": i.preapproved, "variant": i.variant,
+    }
+
+
+# ------------------------------------------------------------------ what the policy needs for an expense, asked up front
+MAX_RECEIPT_BYTES = 5 * 1024 * 1024
+RECEIPT_TYPES = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
+ANSWER_FIELDS = ("nights", "days", "preapproved", "variant")
+
+
+async def receipt_ids(session: AsyncSession, expense_ids: list[int]) -> set[int]:
+    if not expense_ids:
+        return set()
+    return set((await session.execute(select(WorkReceipt.expense_id).where(WorkReceipt.expense_id.in_(expense_ids)))).scalars().all())
+
+
+def lacks_receipt(e: WorkExpense, have: set[int]) -> bool:
+    """The policy wants a receipt FILE for this expense, it has none, and the person hasn't said they have none."""
+    return bool(e.needs_receipt) and e.id not in have and e.has_receipt is not False
+
+
+async def unfinished(session: AsyncSession, user_id: int) -> list[WorkExpense]:
+    """Waiting expenses that still need something from the person (a receipt file or an answer)."""
+    rows = await unclaimed(session, user_id)
+    have = await receipt_ids(session, [r.id for r in rows])
+    return [r for r in rows if r.open_questions or lacks_receipt(r, have)]
+
+
+async def needs_text(session: AsyncSession, rows: list[WorkExpense]) -> str:
+    """One line per thing still needed, naming the expense."""
+    have = await receipt_ids(session, [r.id for r in rows])
+    out = []
+    for r in rows:
+        if lacks_receipt(r, have):
+            out.append(f"📎 #{r.id} {r.description} ({money(r.amount)}): the policy needs the receipt. Send me a photo or PDF of it, or say “no receipt”.")
+        for q in r.open_questions or []:
+            out.append(f"❓ #{r.id} {r.description}: {q.get('text')}")
+    return "\n".join(out)
+
+
+def apply_check(e: WorkExpense, data: dict) -> None:
+    """Remember what the finance agent said this expense still needs."""
+    e.needs_receipt = bool(data.get("receipt_required"))
+    e.open_questions = [{"key": str(q["key"]), "text": str(q["text"])} for q in data.get("questions") or []] or None
+
+
+async def attach_receipt(session: AsyncSession, user_id: int, expense_id: int | None, filename: str, content_type: str, data: bytes) -> WorkExpense | None:
+    """Keep the receipt with the expense. No expense_id: the latest waiting expense that needs one. None if nothing is waiting for a receipt."""
+    content_type = content_type.lower()
+    if content_type not in RECEIPT_TYPES:
+        raise ReimbursementError("A receipt must be a photo (JPG, PNG, WEBP) or a PDF.")
+    if not data or len(data) > MAX_RECEIPT_BYTES:
+        raise ReimbursementError("That file is empty or bigger than 5 MB.")
+    rows = await unclaimed(session, user_id)
+    if expense_id is not None:
+        target = next((r for r in rows if r.id == expense_id), None)
+        if target is None:
+            raise ReimbursementError("I can't find that work expense, or it is already in a claim.")
+    else:
+        have = await receipt_ids(session, [r.id for r in rows])
+        waiting = [r for r in rows if lacks_receipt(r, have)]
+        if not waiting:
+            return None
+        target = waiting[-1]
+    session.add(WorkReceipt(user_id=user_id, expense_id=target.id, filename=(filename or "receipt")[:120], content_type=content_type, data=data))
+    target.has_receipt = True
+    await session.flush()
+    return target
+
+
+async def receipts_payload(session: AsyncSession, expense_ids: list[int]) -> list[dict]:
+    """The receipt files of these expenses, ready to travel with the claim."""
+    if not expense_ids:
+        return []
+    rows = (await session.execute(select(WorkReceipt).where(WorkReceipt.expense_id.in_(expense_ids)).order_by(WorkReceipt.id))).scalars().all()
+    return [{"ref": r.expense_id, "filename": r.filename, "content_type": r.content_type, "data": base64.b64encode(r.data).decode()} for r in rows]
 
 
 async def release_items(session: AsyncSession, claim: WorkClaim) -> None:
@@ -234,3 +310,11 @@ async def report_rows(session: AsyncSession, user_id: int) -> list[dict]:
             "claim_approved": str(c.approved_amount) if c is not None and c.approved_amount is not None else None,
         })
     return rows
+
+
+async def expenses_by_id(session: AsyncSession, user_id: int, ids: list[int]) -> list[WorkExpense]:
+    if not ids:
+        return []
+    return list((await session.execute(
+        select(WorkExpense).where(WorkExpense.user_id == user_id, WorkExpense.id.in_(ids), WorkExpense.voided_at.is_(None)).order_by(WorkExpense.id).with_for_update()
+    )).scalars().all())

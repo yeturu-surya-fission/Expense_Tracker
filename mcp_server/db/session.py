@@ -35,6 +35,10 @@ async def init_db() -> None:
             "ALTER TABLE group_members ADD COLUMN IF NOT EXISTS left_at TIMESTAMPTZ",
             "ALTER TABLE debts ADD COLUMN IF NOT EXISTS detail VARCHAR(500)",
             "ALTER TABLE work_claims ADD COLUMN IF NOT EXISTS decided_items JSONB",
+            "ALTER TABLE work_expenses ADD COLUMN IF NOT EXISTS preapproved BOOLEAN",
+            "ALTER TABLE work_expenses ADD COLUMN IF NOT EXISTS variant VARCHAR(60)",
+            "ALTER TABLE work_expenses ADD COLUMN IF NOT EXISTS needs_receipt BOOLEAN NOT NULL DEFAULT false",
+            "ALTER TABLE work_expenses ADD COLUMN IF NOT EXISTS open_questions JSONB",
             "CREATE INDEX IF NOT EXISTS ix_shared_expenses_bundle_id ON shared_expenses (bundle_id)",
             "CREATE INDEX IF NOT EXISTS ix_debts_bundle_id ON debts (bundle_id)",
         ):

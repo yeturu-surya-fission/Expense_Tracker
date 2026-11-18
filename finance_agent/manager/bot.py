@@ -139,6 +139,29 @@ async def notifier_loop(bot: Bot) -> None:
         await asyncio.sleep(2)
 
 
+async def send_receipts(bot: Bot, telegram_id: int, claim_id: int) -> None:
+    """The receipt files that came with a claim, each labelled with the expense it is for. A failure here never repeats the card."""
+    from finance_agent.claims import receipts, texts
+    from finance_agent.db.models import Claim
+    try:
+        async with session_scope() as s:
+            claim = await s.get(Claim, claim_id)
+            names = {i.ref: texts.label(i) for i in texts.items_of(claim)}
+            files = [(f.filename, f.content_type, f.data, names.get(f.item_ref, f"item {f.item_ref}")) for f in await receipts.of(s, claim_id)]
+        for filename, kind, data, label in files:
+            doc = io.BytesIO(data)
+            caption = f"🧾 Receipt: {label}"[:1000]
+            if kind.startswith("image/"):
+                try:
+                    await bot.send_photo(telegram_id, doc, caption=caption)
+                    continue
+                except TelegramError:  # e.g. an odd picture size: the original file always goes through
+                    doc = io.BytesIO(data)
+            await bot.send_document(telegram_id, doc, filename=filename, caption=caption)
+    except TelegramError as e:
+        log.warning("could not send receipts of claim %s to manager %s: %s", claim_id, telegram_id, e)
+
+
 async def deliver_once(bot: Bot) -> int:
     async with session_scope() as s:
         rows = list((await s.execute(
@@ -148,6 +171,8 @@ async def deliver_once(bot: Bot) -> int:
             try:
                 await bot.send_message(n.telegram_id, n.text, reply_markup=markup(n.buttons))
                 n.status = "sent"
+                if n.claim_id is not None:
+                    await send_receipts(bot, n.telegram_id, n.claim_id)
             except TelegramError as e:
                 n.attempts += 1
                 n.status = "failed" if n.attempts >= 5 else "pending"

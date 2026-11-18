@@ -181,9 +181,19 @@ async def test_the_manager_sets_up_the_company_and_policy_then_edits_it(llm):
 
     changed = [dict(r) for r in RULES]
     changed[0]["cap_amount"] = 8000
+    # chatting: a short answer, never a policy change
+    llm.say({"on_topic": True, "wants_change": False, "reply": "Hotels: up to ₹6,000 a night."})
+    assert (await svc.text(mgr, "what is the hotel limit?")).text == "Hotels: up to ₹6,000 a night."
+    assert "Hotel stays" in llm.calls[-1][1] and "what is the hotel limit?" in llm.calls[-1][1]
+    llm.say({"on_topic": False, "wants_change": False, "reply": ""})
+    assert "only help with your reimbursement policy" in (await svc.text(mgr, "who won the cricket match?")).text
+    llm.say({"on_topic": True, "wants_change": True, "reply": ""})
+    nochange = await svc.text(mgr, "make hotels 9000")  # asks for a change: points to the command and changes nothing
+    assert "/editpolicy" in nochange.text and nochange.buttons is None
+    assert "a bit long" in (await svc.text(mgr, "x" * 500)).text  # guardrail: no model call for a long message
+    llm.say(LLMError("down"))
+    assert "/editpolicy" in (await svc.text(mgr, "what now?")).text  # model unavailable: the list of commands
     llm.say({"rules": changed})
-    chat = await svc.text(mgr, "ok thanks, what next?")  # a stray message never changes the policy, and the model is not even asked
-    assert "nothing was changed" in chat.text and "/editpolicy" in chat.text
     edit = await svc.edit_policy(mgr, "raise the hotel cap to 8000")
     assert "→" in edit.text and "₹8,000" in edit.text
     assert "policy v2" in (await svc.button(mgr, "fp:save")).text
@@ -381,3 +391,17 @@ def test_an_unknown_limit_period_never_fails_the_whole_policy():
     assert Rule.model_validate({"id": "x", "name": "X", "cap_unit": "per trip"}).cap_unit == "per_claim"
     assert Rule.model_validate({"id": "x", "name": "X", "cap_unit": "per person"}).cap_unit == "per_item"
     assert Rule.model_validate({"id": "x", "name": "X"}).cap_unit == "per_item" and Rule.model_validate({"id": "x", "name": "X", "cap_unit": None}).cap_unit == "per_item"
+
+
+async def test_chatting_with_the_manager_bot_is_rate_limited_and_off_topic_is_declined(llm):
+    from finance_agent.manager import chat
+    tg = next(_ids)
+    llm.fallback = lambda system, user: {"on_topic": True, "wants_change": False, "reply": "ok"}
+    answers = [await chat.reply(llm, tg, "Acme", "facts", "what is covered?", "fallback") for _ in range(chat.MAX_PER_WINDOW + 2)]
+    assert answers[0] == "ok" and answers[-1] == chat.SLOW_DOWN and len(llm.calls) == chat.MAX_PER_WINDOW  # no model call once limited
+    # whatever the model says, an off-topic or empty reply is replaced by the fixed one
+    other = next(_ids)
+    llm.fallback = lambda system, user: {"on_topic": False, "reply": "Paris is the capital of France."}
+    assert await chat.reply(llm, other, "Acme", "facts", "capital of France?", "fallback") == chat.OFF_TOPIC
+    llm.fallback = lambda system, user: {"on_topic": True, "reply": ""}
+    assert await chat.reply(llm, other, "Acme", "facts", "anything", "fallback") == chat.OFF_TOPIC

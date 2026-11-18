@@ -6,7 +6,7 @@ Finance Agent's own database, which we only reach through A2A.)
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,8 +41,26 @@ class WorkExpense(Base):
     days: Mapped[int | None] = mapped_column(Integer)
     has_receipt: Mapped[bool | None] = mapped_column(Boolean)
     purpose: Mapped[str | None] = mapped_column(String(200))
+    preapproved: Mapped[bool | None] = mapped_column(Boolean)
+    variant: Mapped[str | None] = mapped_column(String(60))
+    needs_receipt: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # the policy wants a receipt FILE for this one
+    open_questions: Mapped[list | None] = mapped_column(JSONB)  # what the finance agent still needs to know: [{key, text}]
     claim_id: Mapped[int | None] = mapped_column(ForeignKey("work_claims.id", ondelete="SET NULL"), index=True)
     voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WorkReceipt(Base):
+    """The receipt (photo or PDF) for one work expense. Travels with the claim so the manager can check it."""
+
+    __tablename__ = "work_receipts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    expense_id: Mapped[int] = mapped_column(ForeignKey("work_expenses.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String(120))
+    content_type: Mapped[str] = mapped_column(String(60))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

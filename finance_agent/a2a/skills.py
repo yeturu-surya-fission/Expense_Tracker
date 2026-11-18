@@ -5,6 +5,7 @@ none of this knows about the A2A protocol (executor.py turns results into task s
     join_company   an employee joins with the company code
     ask_policy     "will I get a refund on this?"   (can ask follow-up questions: input_required)
     ask_manager    the policy doesn't say: pass the question to the manager
+    check_expense  look at one new work expense: what receipt / details does the policy need?
     submit_claim   check a claim against the policy and hand it to the manager (can ask for missing details)
     claim_reply    answer our questions (nights, receipt...) or the manager's question
     claim_status   where is my claim?
@@ -19,7 +20,10 @@ from finance_agent.db.models import Company, Employee, PolicyQuestion, QaSession
 from finance_agent.db.session import session_scope
 from finance_agent.formatting import money
 from finance_agent.llm import LLM
+from finance_agent.claims import review
 from finance_agent.policy import qa, store
+from finance_agent.policy.engine import evaluate
+from finance_agent.policy.models import Item
 
 
 @dataclass
@@ -139,8 +143,38 @@ async def submit_claim(llm: LLM, caller: Caller, payload: dict, task_id: str | N
         raise SkillError("A claim needs a list of items.")
     async with session_scope() as s:
         company, emp = await _member(s, payload, caller)
-        claim = await claims.submit(s, llm, company, emp, str(payload.get("title") or "Expense claim"), items, _int_or_none(payload.get("external_no")))
+        claim = await claims.submit(
+            s, llm, company, emp, str(payload.get("title") or "Expense claim"), items, _int_or_none(payload.get("external_no")),
+            payload.get("receipts") if isinstance(payload.get("receipts"), list) else None,
+        )
         return _claim_result(claim)
+
+
+async def check_expense(llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str) -> SkillResult:
+    """
+    Look at ONE work expense as soon as it is logged, so the employee is asked for what the policy needs (receipt, nights, days,
+    approval, city tier) now and not when the claim is sent. Nothing is stored here.
+    """
+    raw = payload.get("item")
+    if not isinstance(raw, dict):
+        raise SkillError("Which expense?")
+    try:
+        item = Item.model_validate({**raw, "ref": raw.get("ref") or 1})
+    except Exception:
+        raise SkillError("That expense isn't valid.") from None
+    async with session_scope() as s:
+        company, _ = await _member(s, payload, caller)
+        policy = await store.current(s, company.id)
+    if policy is None:
+        return SkillResult("completed", "", {"questions": [], "receipt_required": False, "checked": False})
+    _, rules = policy
+    rule = await review.rule_for(llm, rules, item)  # (outside any transaction: this may call the model)
+    if rule is None or not rule.covered:
+        return SkillResult("completed", "", {"questions": [], "receipt_required": False, "checked": True, "rule": rule.name if rule else None})
+    receipt = rule.receipt_over is not None and item.amount is not None and item.amount > rule.receipt_over
+    # the receipt is asked for as a FILE, so a spoken "yes I have it" doesn't settle it: leave has_receipt out of what the engine sees
+    questions = [{"key": q.key, "text": q.text} for q in evaluate(rule, item.model_copy(update={"has_receipt": None})).questions if q.key != "has_receipt"]
+    return SkillResult("completed", "", {"questions": questions, "receipt_required": receipt, "checked": True, "rule": rule.name})
 
 
 async def claim_reply(llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str) -> SkillResult:
@@ -175,7 +209,7 @@ async def claim_status(llm: LLM, caller: Caller, payload: dict, task_id: str | N
 
 Handler = Callable[[LLM, Caller, dict, "str | None", str], Awaitable[SkillResult]]
 SKILLS: dict[str, Handler] = {
-    "join_company": join_company, "ask_policy": ask_policy, "ask_manager": ask_manager,
+    "join_company": join_company, "ask_policy": ask_policy, "ask_manager": ask_manager, "check_expense": check_expense,
     "submit_claim": submit_claim, "claim_reply": claim_reply, "claim_status": claim_status,
 }
 

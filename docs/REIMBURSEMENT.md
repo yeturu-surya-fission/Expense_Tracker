@@ -76,6 +76,27 @@ Manager  : Approve
 Kiran    : ✅ Claim #3 (Pune trip) approved: ₹12,450. ₹3,000 of the ₹15,450 you claimed isn't covered.
 ```
 
+## Asked up front, receipts included
+
+When an employee adds a work expense (and has joined a company), the Finance Agent looks at it **straight away** (A2A skill `check_expense`)
+and the bot asks for what the policy needs for *that* expense: the receipt, nights, days, whether it was approved first, the city tier.
+
+- *"work expense: flight 3000"* → if the policy wants a receipt above ₹500: **"Send me a photo or PDF of it, or say “no receipt”."**
+- The employee sends the photo or PDF in the chat. It is kept with that expense (up to 5 MB; JPG, PNG, WEBP or PDF). Typing "I have it" is not enough.
+- Answers like *"2 nights"*, *"yes it was approved"*, *"Tier-1"* go to the right expense with no numbers needed. *"no receipt"* is accepted too:
+  the claim then shows that expense as not eligible and the manager decides.
+- *"send my claim"* is refused while an expense still lacks what the policy asked, and says what is missing. When it is sent, the **receipts
+  travel with the claim** and the manager's bot sends each file right after the claim card, labelled with its expense, to check.
+- If the finance agent is down when an expense is added, nothing is asked then: the checks at claim time (below) still catch everything.
+- A PDF sent while an expense waits for its receipt is the receipt. Otherwise a PDF is still a bank statement.
+
+## The manager just chatting
+
+A message that is not a command (and not an answer the bot is waiting for) gets a **short answer about this company's policy, claims or
+employees** (max 3 lines), or a one-line refusal if it is about something else. It never changes the policy: a request to change a rule
+is pointed to `/editpolicy`. Guardrails: messages over 400 characters are declined, 12 questions per 10 minutes per manager, only the
+company's own facts reach the model, and if the model is down the manager gets the list of commands.
+
 ## When a claim needs more details
 
 After "send my claim" the finance agent may ask things the policy needs (how many days / nights, do you have the receipt, was it approved

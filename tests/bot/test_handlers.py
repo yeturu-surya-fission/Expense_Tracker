@@ -424,3 +424,60 @@ async def test_workpdf_sends_a_pdf_of_the_work_expenses(make_handlers):
     assert sent["document"].startswith(b"%PDF") and sent["filename"].startswith("work-expenses-") and "2 expense(s)" in sent["text"]
     from app.bot.app import COMMANDS
     assert "workpdf" in [c.command for c in COMMANDS]
+
+
+class FakeTgFile:
+    """A photo or document as Telegram hands it over: it can be downloaded."""
+    def __init__(self, data: bytes, file_name=None, mime_type=None):
+        self.data, self.file_name, self.mime_type, self.file_size = data, file_name, mime_type, len(data)
+
+    async def get_file(self):
+        outer = self
+
+        class Downloaded:
+            async def download_as_bytearray(self):
+                return bytearray(outer.data)
+        return Downloaded()
+
+
+async def test_a_photo_or_pdf_is_the_receipt_of_the_expense_that_is_waiting_for_one(make_handlers):
+    from mcp_server.db.session import session_scope as mcp_session
+
+    h, bot = make_handlers(), FakeBot()
+    user = tg_user(new_telegram_id(), "Kiran")
+    chat = private_chat(user.id)
+
+    # nothing is waiting for a receipt: a photo is explained, not silently dropped
+    lonely = FakeMessage("", chat, user, photo=[FakeTgFile(b"jpeg bytes")])
+    await h.on_other_file(update(user, lonely), context(bot))
+    assert "none of your work expenses is waiting for a receipt" in lonely.sent[-1]["text"]
+
+    added = await h.call(h.private(user), "add_work_expense", items=[{"amount": 3000, "category": "flight", "description": "flight to Pune"}])
+    expense_id = added.data["work_expense_ids"][0]
+    async with mcp_session() as s:  # (the finance agent normally says the policy wants a receipt for this one)
+        (exp,) = await _expenses(s, expense_id)
+        exp.needs_receipt = True
+
+    photo = FakeMessage("", chat, user, photo=[FakeTgFile(b"small"), FakeTgFile(b"jpeg bytes of the receipt")])  # the biggest one is last
+    await h.on_other_file(update(user, photo), context(bot))
+    assert "Receipt saved with" in photo.sent[-1]["text"] and "flight to Pune" in photo.sent[-1]["text"]
+    async with mcp_session() as s:
+        (kept,) = await _receipts(s, expense_id)
+        assert kept.data == b"jpeg bytes of the receipt" and kept.content_type == "image/jpeg"
+
+    # nothing is waiting any more: a PDF goes to the bank-statement import as before
+    pdf = FakeMessage("", chat, user, caption="", document=FakeTgFile(b"%PDF-1.4 not a statement", "stmt.pdf", "application/pdf"))
+    await h.on_document(update(user, pdf), context(bot))
+    assert "Receipt saved" not in " ".join(m["text"] for m in pdf.sent)
+
+
+async def _expenses(s, expense_id):
+    from sqlalchemy import select
+    from mcp_server.reimbursement.models import WorkExpense
+    return list((await s.execute(select(WorkExpense).where(WorkExpense.id == expense_id))).scalars().all())
+
+
+async def _receipts(s, expense_id):
+    from sqlalchemy import select
+    from mcp_server.reimbursement.models import WorkReceipt
+    return list((await s.execute(select(WorkReceipt).where(WorkReceipt.expense_id == expense_id))).scalars().all())

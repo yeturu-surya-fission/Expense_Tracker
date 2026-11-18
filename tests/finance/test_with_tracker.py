@@ -3,6 +3,8 @@ The whole reimbursement journey with BOTH services running (no sockets): the emp
 A2A (agent card, signed tokens, tasks), the manager decides through the manager service, and the decision comes back as a
 signed webhook that becomes a message for the employee.
 """
+import base64
+import io
 import json
 import uuid
 
@@ -63,6 +65,25 @@ async def inbox(w, person) -> list[str]:
     return [m["text"] for m in mine]
 
 
+async def send_receipts_to(card) -> list[tuple[str, str, bytes]]:
+    """What the manager's bot sends after the card: (file name, expense, bytes) for every receipt of the claim."""
+    from finance_agent.manager.bot import send_receipts
+
+    class FakeBot:
+        def __init__(self):
+            self.sent = []
+
+        async def send_photo(self, chat, doc, caption=None):
+            self.sent.append(("photo", caption, doc.read()))
+
+        async def send_document(self, chat, doc, filename=None, caption=None):
+            self.sent.append((filename, caption, doc.read()))
+
+    bot = FakeBot()
+    await send_receipts(bot, card.telegram_id, card.claim_id)
+    return [(name if name != "photo" else "hotel.png", caption.replace("🧾 Receipt: ", ""), data) for name, caption, data in bot.sent]
+
+
 async def manager_cards(w) -> list[Notification]:
     async with session_scope() as s:
         return list((await s.execute(select(Notification).where(Notification.telegram_id == w.mgr).order_by(Notification.id))).scalars().all())
@@ -104,20 +125,30 @@ async def test_the_whole_journey(world):
     assert "sent your question" in asked["text"]
     assert any("Kiran Rao asks" in c.text for c in await manager_cards(w))
 
-    # sending the claim needs a confirmation, then the finance agent asks for what is missing
+    # the policy's questions are asked as soon as the expense is added, not when the claim is sent
+    assert work["data"]["needs_input"] and "How many nights?" in work["text"] and "receipt" in work["text"] and "#" + str(cab_id) not in work["text"].split("needs this")[-1]
+    blocked = await kiran.call("submit_claim", title="Pune trip")  # a claim that is missing them is not sent
+    assert blocked["status"] == "rejected" and "How many nights?" in blocked["text"] and "receipt" in blocked["text"]
+    noted = await kiran.ok("expense_details", nights=2)
+    assert "receipt" in noted["text"] and "How many nights?" not in noted["text"]
+    photo = base64.b64encode(b"fake receipt bytes").decode()
+    kept = await kiran.ok("attach_receipt", file_base64=photo, filename="hotel.png", content_type="image/png")
+    assert kept["data"]["attached"] and not kept["data"]["needs_input"] and "send my claim" in kept["text"]
+
+    # sending the claim needs a confirmation; nothing is left to ask, so it goes straight to the manager WITH the receipt
     pending = await kiran.call("submit_claim", title="Pune trip")
     assert pending["status"] == "input_required" and "₹15,450" in pending["text"]
     sent = await kiran.ok("submit_claim", title="Pune trip", answers={"confirm": "yes"})
     claim_id = sent["data"]["claim_id"]
-    assert sent["data"]["needs_info"] and "Pune hotel: How many nights?" in sent["text"]
+    assert not sent["data"]["needs_info"] and sent["data"]["status"] == "awaiting_manager" and "₹12,450" in sent["text"]
     assert (await kiran.ok("list_work_expenses"))["data"]["waiting"] == 0  # they're in the claim now
 
-    done = await kiran.ok("claim_answer", claim_id=claim_id, details=[{"item_id": hotel_id, "nights": 2, "has_receipt": True}])
-    assert done["data"]["status"] == "awaiting_manager" and "₹12,450" in done["text"]
-
-    # the manager sees one card with the policy's recommendation and decides
+    # the manager sees one card with the policy's recommendation, and the receipt file follows it
     card = [c for c in await manager_cards(w) if "Claim #" in c.text][-1]
     assert "Kiran Rao" in card.text and "Pune hotel: ₹15,000 → ₹12,000" in card.text
+    assert "1 receipt file(s) attached" in card.text and card.claim_id is not None
+    sent_files = await send_receipts_to(card)
+    assert sent_files == [("hotel.png", "Pune hotel", b"fake receipt bytes")]
     remote_id = int(card.text.split("Claim #")[1].split()[0])
     approved = await w.svc.button(w.mgr, f"fa:approve:{remote_id}")
     assert "approved for ₹12,450" in approved.text
@@ -253,12 +284,13 @@ async def test_a_claim_waiting_for_details_is_answered_in_plain_words_without_an
     """The conversation that failed in real use: 'It is 1 day for all' must reach the finance agent and the claim must reach the manager."""
     w, llm = world, world.llm
     gopal = await w.harness.person("K Gopal")
-    await gopal.ok("join_company", code=w.code)
+    # (added before joining, so nothing is asked up front: this is the claim-time questions, the safety net)
     await gopal.ok("add_work_expense", items=[{"amount": 6000, "category": "flight", "description": "flight from Hyderabad to Bengaluru"}])
     await gopal.ok("add_work_expense", items=[
         {"amount": 200, "category": "lunch", "description": "lunch"}, {"amount": 300, "category": "dinner", "description": "dinner"},
     ])
     await gopal.ok("add_work_expense", items=[{"amount": 500, "category": "sweets", "description": "sweets for business event"}])
+    await gopal.ok("join_company", code=w.code)
     llm.say({"rule_id": None}, {"rule_id": None})  # nothing in the policy covers a flight (in these test rules) or sweets: the manager decides
 
     sent = await gopal.ok("submit_claim", title="Client meeting", answers={"confirm": "yes"})
@@ -328,3 +360,18 @@ async def test_the_new_column_is_added_to_a_finance_database_that_already_exists
     async with engine.connect() as conn:
         cols = {r[0] for r in (await conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'claims'"))).all()}
     assert "external_no" in cols
+
+
+async def test_saying_there_is_no_receipt_lets_the_claim_through_and_the_manager_sees_it(world):
+    w = world
+    sana = await w.harness.person("Sana Iqbal")
+    await sana.ok("join_company", code=w.code)
+    added = await sana.ok("add_work_expense", items=[{"amount": 9000, "category": "hotel", "description": "Jaipur hotel"}])
+    assert "receipt" in added["text"] and "How many nights?" in added["text"]
+    wrong = await sana.call("expense_details", has_receipt=True)  # saying "I have it" is not the file
+    assert wrong["status"] == "rejected" and "photo or PDF" in wrong["text"]
+    done = await sana.ok("expense_details", nights=2, has_receipt=False)
+    assert "everything" in done["text"] and not done["data"]["needs_input"]
+    await sana.ok("submit_claim", title="Jaipur", answers={"confirm": "yes"})
+    card = [c for c in await manager_cards(w) if "Sana Iqbal" in c.text and "Claim #" in c.text][-1]
+    assert "receipt file" not in card.text and "A receipt is required" in card.text and card.claim_id is None  # nothing to attach
