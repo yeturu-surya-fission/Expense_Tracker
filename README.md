@@ -208,7 +208,6 @@ scratch databases (the finance tests drop and recreate their tables), then `pyte
 - Outside AI apps need a service credential from the operator for now; "Sign in with Telegram" (OAuth) is the next step, see [docs/MCP.md](docs/MCP.md#8-not-done-yet-sign-in-for-people-outside-telegram).
 - Debts already marked "paid" are not netted, and the money owed to you can only be confirmed after the other person marks it paid.
 - Work reimbursements: receipts are a yes/no answer (no photo reading yet), one company per person, and "paid" is marked by the manager. More in [docs/REIMBURSEMENT.md](docs/REIMBURSEMENT.md#limits-today).
-- The `.pptx` files in `docs/` still describe the earlier cash/bank version.
 
 ## More documentation
 - 🏗️ [Architecture](docs/ARCHITECTURE.md): the two services, tokens, chat contexts, agent graph, outbox, data model, deployment, safety

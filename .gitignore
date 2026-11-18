@@ -3,7 +3,8 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
-.pptxsecrets/
+.remember/
+secrets/
 *.pem
 uv.lock
 pyproject.toml
