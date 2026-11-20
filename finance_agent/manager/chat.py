@@ -5,6 +5,7 @@ This never changes anything. The policy changes only through /setpolicy or /edit
 Guardrails: short input, a per-person rate limit, only this company's own facts go to the model, off-topic questions get a
 fixed one-line reply, and if the model is unavailable the manager gets the list of commands instead.
 """
+
 import time
 from collections import defaultdict, deque
 
@@ -43,14 +44,18 @@ def rate_limited(tg: int) -> bool:
     return False
 
 
-async def reply(llm: LLM, tg: int, company: str, facts: str, text: str, fallback: str) -> str:
+async def reply(
+    llm: LLM, tg: int, company: str, facts: str, text: str, fallback: str
+) -> str:
     text = text.strip()
     if len(text) > MAX_CHARS:
         return TOO_LONG
     if rate_limited(tg):
         return SLOW_DOWN
     try:
-        out = await llm.json(SYSTEM, f"COMPANY: {company}\n{facts}\n\nMANAGER'S MESSAGE:\n{text}")
+        out = await llm.json(
+            SYSTEM, f"COMPANY: {company}\n{facts}\n\nMANAGER'S MESSAGE:\n{text}"
+        )
     except LLMError:
         return fallback
     if out.get("wants_change") is True:

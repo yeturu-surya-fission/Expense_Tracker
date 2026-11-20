@@ -1,4 +1,5 @@
 """Background work inside the MCP server: payment reminders (written to the outbox) and housekeeping."""
+
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
@@ -16,7 +17,9 @@ CHECK_EVERY_SECONDS = 30 * 60
 
 async def run_reminders_once() -> int:
     async with session_scope() as s:
-        pending, claimed = await debts.debts_needing_reminder(s, settings.reminder_every_hours)
+        pending, claimed = await debts.debts_needing_reminder(
+            s, settings.reminder_every_hours
+        )
         return await notices.send_reminders(s, pending, claimed)
 
 
@@ -25,9 +28,22 @@ async def cleanup_once(now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
     async with session_scope() as s:
         await s.execute(delete(RevokedToken).where(RevokedToken.expires_at < now))
-        await s.execute(delete(IdempotencyRecord).where(IdempotencyRecord.created_at < now - timedelta(days=2)))
-        await s.execute(delete(Outbox).where(Outbox.status.in_(("sent", "cancelled", "blocked", "failed")), Outbox.created_at < now - timedelta(days=7)))
-        await s.execute(delete(AuditLog).where(AuditLog.at < now - timedelta(days=settings.audit_retention_days)))
+        await s.execute(
+            delete(IdempotencyRecord).where(
+                IdempotencyRecord.created_at < now - timedelta(days=2)
+            )
+        )
+        await s.execute(
+            delete(Outbox).where(
+                Outbox.status.in_(("sent", "cancelled", "blocked", "failed")),
+                Outbox.created_at < now - timedelta(days=7),
+            )
+        )
+        await s.execute(
+            delete(AuditLog).where(
+                AuditLog.at < now - timedelta(days=settings.audit_retention_days)
+            )
+        )
 
 
 async def reminder_loop() -> None:

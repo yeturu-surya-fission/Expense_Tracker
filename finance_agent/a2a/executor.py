@@ -6,7 +6,14 @@ its result becomes the task's next state:
     input-required  we need an answer from the human          (the caller asks them and continues the SAME task)
     failed          a plain-words problem
 """
-from a2a.helpers import get_data_parts, get_message_text, new_data_part, new_task_from_user_message, new_text_part
+
+from a2a.helpers import (
+    get_data_parts,
+    get_message_text,
+    new_data_part,
+    new_task_from_user_message,
+    new_text_part,
+)
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
@@ -35,9 +42,17 @@ class FinanceExecutor(AgentExecutor):
             await updater.failed(say("You aren't signed in."))
             return
         await updater.start_work()
-        payload = next((d for d in get_data_parts(context.message.parts) if isinstance(d, dict)), {})
-        caller = skills.Caller(ref=str(claims["sub"]).removeprefix("user:"), name=str(claims.get("name") or "Employee"))
-        result = await skills.run(self.llm, caller, payload, task.id, get_message_text(context.message))
+        payload = next(
+            (d for d in get_data_parts(context.message.parts) if isinstance(d, dict)),
+            {},
+        )
+        caller = skills.Caller(
+            ref=str(claims["sub"]).removeprefix("user:"),
+            name=str(claims.get("name") or "Employee"),
+        )
+        result = await skills.run(
+            self.llm, caller, payload, task.id, get_message_text(context.message)
+        )
         message = say(result.text, result.data)
         if result.state == "input_required":
             await updater.requires_input(message)

@@ -9,11 +9,19 @@ async def add_friend(call, nickname: str, telegram_id: int) -> str:
     user id (a number such as 123456789). Adding the same id again renames the friend.
     Example: 'add friend Surya 123456789' -> nickname='Surya', telegram_id=123456789."""
     async with session_scope() as s:
-        row, user, created = await friends.add_friend(s, call.user_id, telegram_id, nickname)
+        row, user, created = await friends.add_friend(
+            s, call.user_id, telegram_id, nickname
+        )
         started = user.started_at is not None
-    head = f"👥 Added {row.nickname} (id {user.telegram_id}) to your friends." if created else f"✏️ Renamed your friend (id {user.telegram_id}) to {row.nickname}."
+    head = (
+        f"👥 Added {row.nickname} (id {user.telegram_id}) to your friends."
+        if created
+        else f"✏️ Renamed your friend (id {user.telegram_id}) to {row.nickname}."
+    )
     if started:
-        return head + "\nThey can receive my messages. You can split bills with them now."
+        return (
+            head + "\nThey can receive my messages. You can split bills with them now."
+        )
     return head + "\n" + notices.not_started_hint([row.nickname])
 
 

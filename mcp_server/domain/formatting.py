@@ -1,4 +1,5 @@
 """Pure text rendering. Everything the user reads is built here so tools and bot look the same."""
+
 from decimal import Decimal
 
 from mcp_server.config import settings
@@ -6,10 +7,25 @@ from mcp_server.domain.periods import to_local
 from mcp_server.db.models import Expense
 
 CATEGORY_ICON = {
-    "food": "🍔", "groceries": "🛒", "transport": "🚌", "travel": "✈️", "fuel": "⛽",
-    "clothes": "👕", "shopping": "🛍️", "bills": "🧾", "rent": "🏠", "entertainment": "🎬",
-    "health": "💊", "education": "📚", "insurance": "🛡️", "emi": "💳", "investment": "📈",
-    "gift": "🎁", "dining": "🍽️", "stay": "🏨", "drinks": "🍻",
+    "food": "🍔",
+    "groceries": "🛒",
+    "transport": "🚌",
+    "travel": "✈️",
+    "fuel": "⛽",
+    "clothes": "👕",
+    "shopping": "🛍️",
+    "bills": "🧾",
+    "rent": "🏠",
+    "entertainment": "🎬",
+    "health": "💊",
+    "education": "📚",
+    "insurance": "🛡️",
+    "emi": "💳",
+    "investment": "📈",
+    "gift": "🎁",
+    "dining": "🍽️",
+    "stay": "🏨",
+    "drinks": "🍻",
 }
 
 
@@ -32,7 +48,15 @@ def bar(percent: int, width: int = 10) -> str:
 
 
 def status_dot(percent: int) -> str:
-    return "🟢" if percent < 50 else "🟡" if percent < 80 else "🟠" if percent < 100 else "🔴"
+    return (
+        "🟢"
+        if percent < 50
+        else "🟡"
+        if percent < 80
+        else "🟠"
+        if percent < 100
+        else "🔴"
+    )
 
 
 def friendly_expense(e: Expense) -> str:
@@ -43,7 +67,11 @@ def friendly_expense(e: Expense) -> str:
 
 def history_line(e: Expense) -> str:
     when = to_local(e.occurred_at).strftime("%d %b")
-    what = " · ".join(x for x in (e.category, e.description if e.description != e.category else None) if x)
+    what = " · ".join(
+        x
+        for x in (e.category, e.description if e.description != e.category else None)
+        if x
+    )
     tag = {"split": "  [split share]", "statement": "  [statement]"}.get(e.source, "")
     void = "  ❌ undone" if e.voided_at else ""
     return f"{when}  🔴 {money(e.amount)}  {what}{tag}  #{e.id}{void}"

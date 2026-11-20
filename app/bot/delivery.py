@@ -4,6 +4,7 @@ Delivers the messages the MCP server queues for people ('you owe 750', reminders
 The server never talks to Telegram: it writes an outbox. This loop claims the next messages with a platform tool, sends or
 deletes them in Telegram, and reports each result back (message id on success; `blocked` if the person never pressed Start).
 """
+
 import asyncio
 import logging
 
@@ -21,10 +22,17 @@ BATCH = 20
 def to_markup(buttons: list[list[dict]] | None) -> InlineKeyboardMarkup | None:
     if not buttons:
         return None
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(b["label"], url=b["url"]) if b.get("url") else InlineKeyboardButton(b["label"], callback_data=b["data"]) for b in row]
-        for row in buttons
-    ])
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(b["label"], url=b["url"])
+                if b.get("url")
+                else InlineKeyboardButton(b["label"], callback_data=b["data"])
+                for b in row
+            ]
+            for row in buttons
+        ]
+    )
 
 
 class OutboxDeliverer:
@@ -32,7 +40,9 @@ class OutboxDeliverer:
         self.bot, self.gateway = bot, gateway
 
     async def _ack(self, outbox_id: int, **fields) -> None:
-        await self.gateway.platform("platform_outbox_ack", {"outbox_id": outbox_id, **fields})
+        await self.gateway.platform(
+            "platform_outbox_ack", {"outbox_id": outbox_id, **fields}
+        )
 
     async def deliver(self, m: dict) -> None:
         if m["kind"] == "delete":
@@ -43,10 +53,14 @@ class OutboxDeliverer:
             await self._ack(m["id"])
             return
         try:
-            sent = await self.bot.send_message(m["telegram_id"], m["text"], reply_markup=to_markup(m.get("buttons")))
+            sent = await self.bot.send_message(
+                m["telegram_id"], m["text"], reply_markup=to_markup(m.get("buttons"))
+            )
         except Forbidden:  # the person never pressed Start, or blocked the bot
             log.info("cannot message %s: bot not started / blocked", m["telegram_id"])
-            self.gateway.forget_sessions(m["telegram_id"])  # their next message re-opens a session as 'started'
+            self.gateway.forget_sessions(
+                m["telegram_id"]
+            )  # their next message re-opens a session as 'started'
             await self._ack(m["id"], blocked=True, error="forbidden")
         except TelegramError as e:
             log.warning("sending to %s failed: %s", m["telegram_id"], e)

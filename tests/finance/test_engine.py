@@ -1,9 +1,16 @@
 """The policy maths. Every amount an employee is told comes from here, so these are exact."""
+
 from decimal import Decimal as D
 
 import pytest
 
-from finance_agent.policy.engine import describe, evaluate, match_rule, open_questions, total
+from finance_agent.policy.engine import (
+    describe,
+    evaluate,
+    match_rule,
+    open_questions,
+    total,
+)
 from finance_agent.policy.models import Item, Rule
 from tests.finance.conftest import RULES
 
@@ -37,9 +44,14 @@ def test_a_hotel_needs_the_number_of_nights_and_a_receipt_before_we_can_say():
 
 
 def test_no_receipt_above_the_threshold_means_not_eligible_but_small_amounts_need_none():
-    assert verdict("hotel", amount=D(900), nights=1, has_receipt=False).status == "not_eligible"
+    assert (
+        verdict("hotel", amount=D(900), nights=1, has_receipt=False).status
+        == "not_eligible"
+    )
     small = Rule(id="parking", name="Parking", receipt_over=D(500))
-    assert evaluate(small, item(amount=D(300))).status == "eligible"  # under the threshold: no receipt question, no refusal
+    assert (
+        evaluate(small, item(amount=D(300))).status == "eligible"
+    )  # under the threshold: no receipt question, no refusal
 
 
 def test_meals_are_capped_per_day():
@@ -66,8 +78,12 @@ def test_a_rule_that_is_not_covered_pays_nothing():
 
 def test_preapproval_is_asked_and_enforced():
     assert verdict("training", amount=D(8000)).questions[0].key == "preapproved"
-    assert verdict("training", amount=D(8000), preapproved=False).status == "not_eligible"
-    assert verdict("training", amount=D(8000), preapproved=True).eligible == D("8000.00")
+    assert (
+        verdict("training", amount=D(8000), preapproved=False).status == "not_eligible"
+    )
+    assert verdict("training", amount=D(8000), preapproved=True).eligible == D(
+        "8000.00"
+    )
 
 
 def test_an_item_no_rule_covers_goes_to_the_manager():
@@ -81,27 +97,50 @@ def test_missing_or_zero_amount_is_asked_for():
 
 def test_money_never_drifts_on_awkward_numbers():
     rule = Rule(id="x", name="X", percent=33)
-    assert evaluate(rule, item(amount=D("100.10"))).eligible == D("33.03")  # 33.033 rounded to paise
+    assert evaluate(rule, item(amount=D("100.10"))).eligible == D(
+        "33.03"
+    )  # 33.033 rounded to paise
 
 
 def test_matching_by_id_name_keyword_and_longest_keyword():
     assert match_rule(RULES_, item(category="hotel")).id == "hotel"
     assert match_rule(RULES_, item(category="Hotel stays")).id == "hotel"
-    assert match_rule(RULES_, item(category="travel", description="Uber cab to client office")).id == "local_travel"
-    assert match_rule(RULES_, item(category="other", description="team lunch with client")).id == "meals"
+    assert (
+        match_rule(
+            RULES_, item(category="travel", description="Uber cab to client office")
+        ).id
+        == "local_travel"
+    )
+    assert (
+        match_rule(
+            RULES_, item(category="other", description="team lunch with client")
+        ).id
+        == "meals"
+    )
     assert match_rule(RULES_, item(category="spa", description="massage")) is None
     # keywords match whole words only: 'auto' must not match 'automatic'
-    assert match_rule(RULES_, item(category="x", description="automatic renewal")) is None
+    assert (
+        match_rule(RULES_, item(category="x", description="automatic renewal")) is None
+    )
 
 
 def test_totals_and_open_questions():
-    vs = [verdict("hotel", ref=1, amount=D(15000), nights=2, has_receipt=True), verdict("meals", ref=2, amount=D(900)), verdict("local_travel", ref=3, amount=D(450))]
-    assert total(vs) == D("12000.00") + D("450.00")  # the meal still needs 'days', so it has no number yet
+    vs = [
+        verdict("hotel", ref=1, amount=D(15000), nights=2, has_receipt=True),
+        verdict("meals", ref=2, amount=D(900)),
+        verdict("local_travel", ref=3, amount=D(450)),
+    ]
+    assert total(vs) == D("12000.00") + D(
+        "450.00"
+    )  # the meal still needs 'days', so it has no number yet
     assert [q.key for q in open_questions(vs)] == ["days"]
 
 
 def test_every_rule_can_be_described_in_words():
-    assert describe(BY_ID["hotel"]) == "Hotel stays: up to ₹6,000 per night, receipt needed above ₹500"
+    assert (
+        describe(BY_ID["hotel"])
+        == "Hotel stays: up to ₹6,000 per night, receipt needed above ₹500"
+    )
     assert describe(BY_ID["gym"]) == "Gym membership: not reimbursed"
     assert "approval before you spend" in describe(BY_ID["training"])
 

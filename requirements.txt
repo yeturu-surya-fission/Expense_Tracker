@@ -1,4 +1,0 @@
-# everything, for local development (each service installs only its own file in Docker)
--r requirements-mcp.txt
--r requirements-bot.txt
--r requirements-finance.txt

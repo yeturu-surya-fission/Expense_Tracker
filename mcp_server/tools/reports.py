@@ -5,14 +5,18 @@ from mcp_server.tools.registry import tool
 
 
 @tool(contexts=("private",))
-async def get_expenses(call, period: str = "all_time", limit: int = 10, category: str | None = None) -> str:
+async def get_expenses(
+    call, period: str = "all_time", limit: int = 10, category: str | None = None
+) -> str:
     """The user's expense history, newest first.
     period: today, yesterday, this_week, last_7_days, last_30_days, this_month, last_month, this_year, all_time,
     OR a month 'YYYY-MM' (September 2026 = '2026-09'), a day 'YYYY-MM-DD', or a range 'YYYY-MM-DD..YYYY-MM-DD'.
     category optional filter. limit max 50."""
     try:
         async with session_scope() as s:
-            return await views.recent_text(s, call.user_id, period=period, limit=limit, category=category)
+            return await views.recent_text(
+                s, call.user_id, period=period, limit=limit, category=category
+            )
     except PeriodError as e:
         return f"❌ {e}"
 

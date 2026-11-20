@@ -5,6 +5,7 @@ One conversation thread per person per chat. If the graph is paused on a human-i
 is treated as the answer; if it is NOT a valid answer the pending question is cancelled and the message is processed
 as a fresh request.
 """
+
 import asyncio
 import logging
 from collections import defaultdict
@@ -22,47 +23,84 @@ log = logging.getLogger(__name__)
 @dataclass
 class AgentReply:
     text: str
-    choices: list[dict] = field(default_factory=list)  # non-empty => ask the user to pick one: [{"id","label"}]
-    txn_ids: list[int] = field(default_factory=list)  # expenses just recorded (Undo button)
-    split_ids: list[int] = field(default_factory=list)  # splits just created (Cancel-split button)
-    start_users: list[dict] = field(default_factory=list)  # [{telegram_id, name}] people who still need to press Start
-    dues: dict | None = None  # who owes whom, as data for the "I paid" buttons (after my_dues)
-    group_id: int | None = None  # the expense group the reply is about (for the 'press Start' link)
+    choices: list[dict] = field(
+        default_factory=list
+    )  # non-empty => ask the user to pick one: [{"id","label"}]
+    txn_ids: list[int] = field(
+        default_factory=list
+    )  # expenses just recorded (Undo button)
+    split_ids: list[int] = field(
+        default_factory=list
+    )  # splits just created (Cancel-split button)
+    start_users: list[dict] = field(
+        default_factory=list
+    )  # [{telegram_id, name}] people who still need to press Start
+    dues: dict | None = (
+        None  # who owes whom, as data for the "I paid" buttons (after my_dues)
+    )
+    group_id: int | None = (
+        None  # the expense group the reply is about (for the 'press Start' link)
+    )
 
 
 def is_rate_limit(exc: BaseException) -> bool:
     text = f"{type(exc).__name__} {exc}".lower()
-    return "ratelimit" in text or "resource_exhausted" in text or "429" in text or "quota" in text
+    return (
+        "ratelimit" in text
+        or "resource_exhausted" in text
+        or "429" in text
+        or "quota" in text
+    )
 
 
 def message_text(msg) -> str:
     content = msg.content
     if isinstance(content, list):  # Gemini/Anthropic may return content blocks
-        content = "".join(p if isinstance(p, str) else p.get("text", "") for p in content)
+        content = "".join(
+            p if isinstance(p, str) else p.get("text", "") for p in content
+        )
     return (content or "").strip()
 
 
 class AgentRunner:
     def __init__(self, graph):
         self.graph = graph
-        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)  # single-process guard
+        self._locks: dict[str, asyncio.Lock] = defaultdict(
+            asyncio.Lock
+        )  # single-process guard
 
     async def chat(
-        self, *, identity: Identity, thread_id: str, text: str, from_button: bool = False, member_count: int | None = None
+        self,
+        *,
+        identity: Identity,
+        thread_id: str,
+        text: str,
+        from_button: bool = False,
+        member_count: int | None = None,
     ) -> AgentReply:
         """`identity` says who is talking and in which chat; the graph turns it into MCP session tokens."""
         configurable = {
-            "thread_id": thread_id, "telegram_id": identity.telegram_id, "name": identity.name, "username": identity.username,
-            "chat_type": identity.chat_type, "group_chat_id": identity.group_chat_id, "group_title": identity.group_title,
-            "started": identity.started, "member_count": member_count,
+            "thread_id": thread_id,
+            "telegram_id": identity.telegram_id,
+            "name": identity.name,
+            "username": identity.username,
+            "chat_type": identity.chat_type,
+            "group_chat_id": identity.group_chat_id,
+            "group_title": identity.group_title,
+            "started": identity.started,
+            "member_count": member_count,
         }
         config = {"configurable": configurable, "recursion_limit": 40}
         async with self._locks[thread_id]:
             pending = await self._pending_interrupt(config)
 
             if pending is not None:
-                answer = "cancel" if is_cancel(text) and not match_option(text, pending.get("options", [])) \
+                answer = (
+                    "cancel"
+                    if is_cancel(text)
+                    and not match_option(text, pending.get("options", []))
                     else match_option(text, pending.get("options", []))
+                )
                 if answer:
                     return await self._run(Command(resume=answer), config)
                 # unrelated message: drop the stale question, then handle the message normally
@@ -78,13 +116,22 @@ class AgentRunner:
         result = await self.graph.ainvoke(graph_input, config)
         pending = await self._pending_interrupt(config)
         if pending is not None:
-            choices = [{"id": o["id"], "label": o["label"]} for o in pending.get("options", [])] + [{"id": "cancel", "label": "✖ Cancel"}]
+            choices = [
+                {"id": o["id"], "label": o["label"]} for o in pending.get("options", [])
+            ] + [{"id": "cancel", "label": "✖ Cancel"}]
             return AgentReply(pending["question"], choices=choices)
-        last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None)
+        last_ai = next(
+            (m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None
+        )
         text = (message_text(last_ai) if last_ai else "") or "Done."
         extra = last_ai.additional_kwargs if last_ai else {}
         return AgentReply(
-            text, txn_ids=extra.get("txn_ids", []), split_ids=extra.get("split_ids", []), start_users=extra.get("start_users", []), group_id=extra.get("group_id"), dues=extra.get("dues")
+            text,
+            txn_ids=extra.get("txn_ids", []),
+            split_ids=extra.get("split_ids", []),
+            start_users=extra.get("start_users", []),
+            group_id=extra.get("group_id"),
+            dues=extra.get("dues"),
         )
 
     async def _pending_interrupt(self, config) -> dict | None:

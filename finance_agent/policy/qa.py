@@ -5,6 +5,7 @@ The model's job is to understand the question (which rule? how much? how many ni
 come from the rules engine, so they cannot be invented. If something needed is missing we ask; if no rule covers it we say
 so and offer to ask the manager.
 """
+
 import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -53,13 +54,21 @@ def _int(value) -> int | None:
     return int(n) if n is not None and n == n.to_integral_value() and n > 0 else None
 
 
-async def answer(llm: LLM, rules: list[Rule], version: int, transcript: list[str]) -> QaResult:
+async def answer(
+    llm: LLM, rules: list[Rule], version: int, transcript: list[str]
+) -> QaResult:
     """transcript: the conversation so far, oldest first, each line prefixed 'Employee: ' or 'Agent: '."""
-    prompt = f"POLICY RULES (version {version}):\n{json.dumps([r.model_dump(mode='json') for r in rules], ensure_ascii=False)}\n\nCONVERSATION:\n" + "\n".join(transcript)
+    prompt = (
+        f"POLICY RULES (version {version}):\n{json.dumps([r.model_dump(mode='json') for r in rules], ensure_ascii=False)}\n\nCONVERSATION:\n"
+        + "\n".join(transcript)
+    )
     try:
         out = await llm.json(SYSTEM, prompt)
     except LLMError:
-        return QaResult("need_info", "I couldn't look that up right now. Please ask again in a moment.")
+        return QaResult(
+            "need_info",
+            "I couldn't look that up right now. Please ask again in a moment.",
+        )
     kind = out.get("kind")
     foot = f"\n(Company policy v{version})"
 
@@ -67,34 +76,67 @@ async def answer(llm: LLM, rules: list[Rule], version: int, transcript: list[str
         return QaResult("answer", str(out["answer"]).strip() + foot)
     if kind == "missing":
         qs = [str(q).strip() for q in out.get("questions") or [] if str(q).strip()]
-        return QaResult("need_info", qs[0] if qs else "What exactly do you want to claim, and how much was it?")
+        return QaResult(
+            "need_info",
+            qs[0] if qs else "What exactly do you want to claim, and how much was it?",
+        )
     if kind != "item":
-        return QaResult("not_covered", "I can't find anything in the company policy about that." + foot, can_escalate=True)
+        return QaResult(
+            "not_covered",
+            "I can't find anything in the company policy about that." + foot,
+            can_escalate=True,
+        )
 
     by_id = {r.id: r for r in rules}
     rule = by_id.get(str(out.get("rule_id") or ""))
     raw = out.get("item") or {}
     if rule is None:
-        return QaResult("not_covered", "I can't find a rule in the company policy that covers that." + foot, can_escalate=True)
-    item = Item(description=str(raw.get("description") or ""), amount=_num(raw.get("amount")), nights=_int(raw.get("nights")), days=_int(raw.get("days")),
-                variant=(str(raw.get("variant")).strip() or None) if raw.get("variant") else None)
+        return QaResult(
+            "not_covered",
+            "I can't find a rule in the company policy that covers that." + foot,
+            can_escalate=True,
+        )
+    item = Item(
+        description=str(raw.get("description") or ""),
+        amount=_num(raw.get("amount")),
+        nights=_int(raw.get("nights")),
+        days=_int(raw.get("days")),
+        variant=(str(raw.get("variant")).strip() or None)
+        if raw.get("variant")
+        else None,
+    )
 
     if not rule.covered:
         return QaResult("answer", f"❌ {evaluate(rule, item).reason}")
 
     missing = [q.text for q in ask_for(rule, item, strict=False)]
-    has_limit = rule.cap_amount is not None or rule.percent < 100 or any(v.cap_amount is not None for v in rule.variants)
+    has_limit = (
+        rule.cap_amount is not None
+        or rule.percent < 100
+        or any(v.cap_amount is not None for v in rule.variants)
+    )
     if has_limit and item.amount is None:
         missing.append("How much is it?")
     if missing:
         return QaResult("need_info", " ".join(dict.fromkeys(missing)))
 
     # receipts / approvals are only *mentioned* when asking, so assume they are fine to get the number
-    verdict = evaluate(rule, item.model_copy(update={"has_receipt": True, "preapproved": True, "amount": item.amount or Decimal(1)}))
+    verdict = evaluate(
+        rule,
+        item.model_copy(
+            update={
+                "has_receipt": True,
+                "preapproved": True,
+                "amount": item.amount or Decimal(1),
+            }
+        ),
+    )
     if item.amount is None:
         head = f"✅ {rule.name} is covered."
     elif verdict.status == "eligible":
-        head = f"✅ Yes, {rule.name.lower()} is fully covered: you'd get the whole amount."
+        head = (
+            f"✅ Yes, {rule.name.lower()} is fully covered: you'd get the whole amount."
+        )
     else:
         head = f"⚠️ Partly. {verdict.reason}"
     cap = effective_cap(rule, item)
@@ -109,7 +151,11 @@ def _needs(rule: Rule) -> str:
     """The few things the employee must do to get it, in one line (the limit is already in the answer)."""
     bits = []
     if rule.receipt_over is not None:
-        bits.append("keep the receipt" if rule.receipt_over == 0 else f"receipt needed above {money(rule.receipt_over)}")
+        bits.append(
+            "keep the receipt"
+            if rule.receipt_over == 0
+            else f"receipt needed above {money(rule.receipt_over)}"
+        )
     if rule.needs_preapproval:
         bits.append("needs approval before you spend")
     elif rule.preapproval_over is not None:

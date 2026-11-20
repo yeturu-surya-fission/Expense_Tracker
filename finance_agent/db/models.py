@@ -1,7 +1,18 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -21,21 +32,29 @@ class Company(Base):
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(120))
     manager_telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class PolicyVersion(Base):
     """Every saved policy is a new row, so an old claim can be explained by the rules that applied to it."""
 
     __tablename__ = "policy_versions"
-    __table_args__ = (UniqueConstraint("company_id", "version", name="uq_policy_version"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "version", name="uq_policy_version"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), index=True
+    )
     version: Mapped[int] = mapped_column(Integer)
     rules: Mapped[list] = mapped_column(JSONB)
     note: Mapped[str | None] = mapped_column(String(300))  # what changed
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class Employee(Base):
@@ -45,10 +64,14 @@ class Employee(Base):
     __table_args__ = (UniqueConstraint("company_id", "ref", name="uq_employee"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), index=True
+    )
     ref: Mapped[str] = mapped_column(String(64))
     name: Mapped[str] = mapped_column(String(128))
-    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class Claim(Base):
@@ -57,21 +80,35 @@ class Claim(Base):
     __tablename__ = "claims"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
-    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"), index=True)
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), index=True
+    )
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"), index=True
+    )
     title: Mapped[str] = mapped_column(String(160))
     status: Mapped[str] = mapped_column(String(20), default="needs_info", index=True)
     items: Mapped[list] = mapped_column(JSONB)  # what the employee claimed
-    verdicts: Mapped[list] = mapped_column(JSONB)  # what the policy says about each item
+    verdicts: Mapped[list] = mapped_column(
+        JSONB
+    )  # what the policy says about each item
     recommended: Mapped[Decimal] = mapped_column(MONEY, default=0)
     approved_amount: Mapped[Decimal | None] = mapped_column(MONEY)
     decision_note: Mapped[str | None] = mapped_column(String(500))
-    decided_items: Mapped[list | None] = mapped_column(JSONB)  # per expense: [{ref, claimed, approved, reason}] so the employee sees which ones were cut
+    decided_items: Mapped[list | None] = mapped_column(
+        JSONB
+    )  # per expense: [{ref, claimed, approved, reason}] so the employee sees which ones were cut
     policy_version: Mapped[int] = mapped_column(Integer)
-    external_no: Mapped[int | None] = mapped_column(Integer)  # the number the employee knows this claim by (their tracker's claim id)
-    thread: Mapped[list] = mapped_column(JSONB, default=list)  # questions and answers between manager and employee
+    external_no: Mapped[int | None] = mapped_column(
+        Integer
+    )  # the number the employee knows this claim by (their tracker's claim id)
+    thread: Mapped[list] = mapped_column(
+        JSONB, default=list
+    )  # questions and answers between manager and employee
     paid: Mapped[bool] = mapped_column(default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -81,11 +118,17 @@ class PolicyQuestion(Base):
     __tablename__ = "policy_questions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
-    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), index=True
+    )
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE")
+    )
     text: Mapped[str] = mapped_column(String(1000))
     answer: Mapped[str | None] = mapped_column(String(1000))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class QaSession(Base):
@@ -94,9 +137,13 @@ class QaSession(Base):
     __tablename__ = "qa_sessions"
 
     task_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE")
+    )
     transcript: Mapped[list] = mapped_column(JSONB, default=list)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class ManagerState(Base):
@@ -107,7 +154,9 @@ class ManagerState(Base):
     telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     mode: Mapped[str] = mapped_column(String(40))
     payload: Mapped[dict] = mapped_column(JSONB, default=dict)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class ClaimReceipt(Base):
@@ -116,7 +165,9 @@ class ClaimReceipt(Base):
     __tablename__ = "claim_receipts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    claim_id: Mapped[int] = mapped_column(ForeignKey("claims.id", ondelete="CASCADE"), index=True)
+    claim_id: Mapped[int] = mapped_column(
+        ForeignKey("claims.id", ondelete="CASCADE"), index=True
+    )
     item_ref: Mapped[int] = mapped_column(Integer)
     filename: Mapped[str] = mapped_column(String(120))
     content_type: Mapped[str] = mapped_column(String(60))
@@ -134,8 +185,12 @@ class Notification(Base):
     buttons: Mapped[list | None] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String(12), default="pending", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
-    claim_id: Mapped[int | None] = mapped_column(Integer)  # when set, the claim's receipt files are sent right after this message
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    claim_id: Mapped[int | None] = mapped_column(
+        Integer
+    )  # when set, the claim's receipt files are sent right after this message
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class WebhookEvent(Base):
@@ -145,7 +200,13 @@ class WebhookEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     payload: Mapped[dict] = mapped_column(JSONB)
-    status: Mapped[str] = mapped_column(String(12), default="pending", index=True)  # pending | sent | failed
+    status: Mapped[str] = mapped_column(
+        String(12), default="pending", index=True
+    )  # pending | sent | failed
     attempts: Mapped[int] = mapped_column(Integer, default=0)
-    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

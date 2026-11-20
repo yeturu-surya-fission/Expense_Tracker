@@ -1,4 +1,5 @@
 """Calendar helpers the chat client needs for its month buttons (the server does the real period maths)."""
+
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 

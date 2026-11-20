@@ -1,4 +1,5 @@
 """Read-only queries: history and summaries of a person's own expenses."""
+
 from datetime import date
 from decimal import Decimal
 
@@ -20,12 +21,19 @@ def _filters(user_id: int, period: Period) -> list:
 
 
 async def list_expenses(
-    session: AsyncSession, user_id: int, *, period: Period, limit: int = 10, category: str | None = None
+    session: AsyncSession,
+    user_id: int,
+    *,
+    period: Period,
+    limit: int = 10,
+    category: str | None = None,
 ) -> list[Expense]:
     q = select(Expense).where(*_filters(user_id, period))
     if category:
         q = q.where(Expense.category == category.strip().lower())
-    q = q.order_by(Expense.occurred_at.desc(), Expense.id.desc()).limit(max(1, min(limit, 50)))
+    q = q.order_by(Expense.occurred_at.desc(), Expense.id.desc()).limit(
+        max(1, min(limit, 50))
+    )
     return list((await session.execute(q)).scalars().all())
 
 
@@ -49,7 +57,9 @@ def _local(col):
     return func.timezone(settings.timezone, col)
 
 
-async def monthly_trend(session: AsyncSession, user_id: int, *, months: int = 6, category: str | None = None) -> dict:
+async def monthly_trend(
+    session: AsyncSession, user_id: int, *, months: int = 6, category: str | None = None
+) -> dict:
     """Spent per calendar month for the last `months` months (including the current one)."""
     months = max(1, min(months, 24))
     keys = [shift_month(month_key(), -i) for i in range(months - 1, -1, -1)]
@@ -73,7 +83,9 @@ async def monthly_trend(session: AsyncSession, user_id: int, *, months: int = 6,
         if k not in spent:
             continue
         spent[k] += Decimal(total)
-        by_cat.setdefault(cat or "other", {k2: Decimal(0) for k2 in keys})[k] += Decimal(total)
+        by_cat.setdefault(cat or "other", {k2: Decimal(0) for k2 in keys})[k] += (
+            Decimal(total)
+        )
     return {"months": keys, "spent": spent, "by_category": by_cat}
 
 
@@ -81,14 +93,37 @@ async def daily_breakdown(session: AsyncSession, user_id: int, month: str) -> di
     """Spending per day inside one month."""
     p = month_period(month)
     d = func.date(_local(Expense.occurred_at))
-    base = [Expense.user_id == user_id, Expense.voided_at.is_(None), Expense.occurred_at >= p.start, Expense.occurred_at < p.end]
-    rows = (await session.execute(select(d, func.sum(Expense.amount), func.count()).where(*base).group_by(d).order_by(d))).all()
+    base = [
+        Expense.user_id == user_id,
+        Expense.voided_at.is_(None),
+        Expense.occurred_at >= p.start,
+        Expense.occurred_at < p.end,
+    ]
+    rows = (
+        await session.execute(
+            select(d, func.sum(Expense.amount), func.count())
+            .where(*base)
+            .group_by(d)
+            .order_by(d)
+        )
+    ).all()
     top = (
         await session.execute(
-            select(d, Expense.category, func.sum(Expense.amount)).where(*base).group_by(d, Expense.category).order_by(d, func.sum(Expense.amount).desc())
+            select(d, Expense.category, func.sum(Expense.amount))
+            .where(*base)
+            .group_by(d, Expense.category)
+            .order_by(d, func.sum(Expense.amount).desc())
         )
     ).all()
     top_cat: dict[date, str] = {}
     for day, cat, _ in top:
-        top_cat.setdefault(day, cat or "other")  # first row per day = its biggest category
-    return {"label": p.label, "days": [(day, Decimal(total), n, top_cat.get(day, "other")) for day, total, n in rows]}
+        top_cat.setdefault(
+            day, cat or "other"
+        )  # first row per day = its biggest category
+    return {
+        "label": p.label,
+        "days": [
+            (day, Decimal(total), n, top_cat.get(day, "other"))
+            for day, total, n in rows
+        ],
+    }

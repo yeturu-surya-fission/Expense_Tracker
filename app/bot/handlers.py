@@ -1,4 +1,5 @@
 """BotHandlers = every handler mixed together, plus the one place that routes inline-button taps."""
+
 import logging
 
 from telegram import Update
@@ -17,7 +18,9 @@ log = logging.getLogger(__name__)
 
 
 class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin, ReimburseMixin):
-    async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def on_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         q = update.callback_query
         await q.answer()  # stops the button's loading spinner immediately
         tg, msg = q.from_user, q.message
@@ -25,14 +28,18 @@ class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin, ReimburseM
             return
         kind, _, arg = q.data.partition(":")
 
-        if kind == "hitl":  # answer to a question the bot asked: hitl:<option>[:<owner telegram id>]
+        if (
+            kind == "hitl"
+        ):  # answer to a question the bot asked: hitl:<option>[:<owner telegram id>]
             option, _, owner = arg.partition(":")
             if owner and owner != str(tg.id):
                 await q.answer("This question is for someone else.", show_alert=True)
                 return
             await q.edit_message_reply_markup(reply_markup=None)  # one-shot buttons
             async with keep_typing(context.bot, msg.chat_id):
-                reply = await self._ask(tg, msg.chat, option, bot=context.bot, from_button=True)
+                reply = await self._ask(
+                    tg, msg.chat, option, bot=context.bot, from_button=True
+                )
             in_group = msg.chat.type != "private"
             await self._send(msg, reply, owner_telegram_id=tg.id if in_group else None)
             if in_group:
@@ -42,7 +49,9 @@ class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin, ReimburseM
             await self._due(q, tg, arg)
 
         elif kind in ("payto", "recvfrom", "notyetfrom") and arg.isdigit():
-            action = {"payto": "pay", "recvfrom": "received", "notyetfrom": "notyet"}[kind]
+            action = {"payto": "pay", "recvfrom": "received", "notyetfrom": "notyet"}[
+                kind
+            ]
             await self._settle_with(q, tg, action, int(arg))
 
         elif kind == "rb":
@@ -79,7 +88,9 @@ class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin, ReimburseM
         await q.edit_message_text(res.text)
 
     async def _undo_split(self, q, tg, split_id: int) -> None:
-        res = await self.call(self.ident_for(tg, q.message.chat), "cancel_split", split_id=split_id)
+        res = await self.call(
+            self.ident_for(tg, q.message.chat), "cancel_split", split_id=split_id
+        )
         if not res.ok:
             await q.edit_message_reply_markup(reply_markup=None)
             await q.message.reply_text(res.message.replace("❌ ", "ℹ️ ", 1))
@@ -94,7 +105,13 @@ class BotHandlers(PrivateMixin, GroupMixin, DueMixin, StatementMixin, ReimburseM
         if not res.ok:
             await q.message.reply_text(res.message)
             return
-        markup = kb.summary_keyboard(arg) if kind == "sum" else kb.daily_keyboard(arg) if kind == "day" else kb.trend_keyboard(int(arg))
+        markup = (
+            kb.summary_keyboard(arg)
+            if kind == "sum"
+            else kb.daily_keyboard(arg)
+            if kind == "day"
+            else kb.trend_keyboard(int(arg))
+        )
         try:
             await q.edit_message_text(res.text, reply_markup=markup)
         except BadRequest:  # same content tapped twice

@@ -3,6 +3,7 @@
 The bot (app/) may never import the database or the server; the server (mcp_server/) may never import Telegram or LangChain.
 Excerpt from tests/test_architecture.py.
 """
+
 import ast
 from pathlib import Path
 

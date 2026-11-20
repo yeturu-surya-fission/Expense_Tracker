@@ -5,6 +5,7 @@ The life of a debt:   pending --(debtor taps "I paid")--> claimed --(creditor ta
 When the debtor says they paid, their share is recorded in THEIR expenses straight away. If the creditor then says
 they have not received it, that expense is voided again and the debt returns to the debtor's list.
 """
+
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -21,7 +22,9 @@ from mcp_server.db.models import Debt, Expense, Share
 
 
 async def _lock(session: AsyncSession, debt_id: int) -> Debt:
-    debt = (await session.execute(select(Debt).where(Debt.id == debt_id).with_for_update())).scalar_one_or_none()
+    debt = (
+        await session.execute(select(Debt).where(Debt.id == debt_id).with_for_update())
+    ).scalar_one_or_none()
     if debt is None:
         raise DebtError("I can't find that payment any more.")
     return debt
@@ -30,19 +33,25 @@ async def _lock(session: AsyncSession, debt_id: int) -> Debt:
 async def _log_for(session: AsyncSession, debt: Debt) -> list[Expense]:
     """Record the debtor's share of what this debt is for as THEIR expense."""
     if debt.kind == "quick":
-        return await log_user_shares(session, debt.debtor_id, shared_expense_id=debt.shared_expense_id)
+        return await log_user_shares(
+            session, debt.debtor_id, shared_expense_id=debt.shared_expense_id
+        )
     if debt.kind == "bundle":
         return await log_user_shares(session, debt.debtor_id, bundle_id=debt.bundle_id)
     return await log_user_shares(session, debt.debtor_id, group_id=debt.group_id)
 
 
-async def claim(session: AsyncSession, debt_id: int, by_user_id: int) -> tuple[Debt, list[Expense]]:
+async def claim(
+    session: AsyncSession, debt_id: int, by_user_id: int
+) -> tuple[Debt, list[Expense]]:
     """The debtor says 'I paid'. Records their share as their own expense."""
     debt = await _lock(session, debt_id)
     if debt.debtor_id != by_user_id:
         raise DebtError("That payment isn't yours to mark.")
     if debt.status == "claimed":
-        raise DebtError("You already marked this as paid. Waiting for the other person to confirm.")
+        raise DebtError(
+            "You already marked this as paid. Waiting for the other person to confirm."
+        )
     if debt.status == "settled":
         raise DebtError("This one is already settled.")
     if debt.status == "cancelled":
@@ -81,19 +90,42 @@ async def reject(session: AsyncSession, debt_id: int, by_user_id: int) -> Debt:
     # A person who owes several people records their whole share once, on their first payment. If another payment of
     # theirs in the same settlement still stands, the expense stays and moves over to that payment.
     # (a quick split paid in two parts has two debts for the same bill, so it needs the same care)
-    scope = (Debt.bundle_id == debt.bundle_id) if debt.kind == "bundle" else (
-        (Debt.group_id == debt.group_id) if debt.kind == "group" else (Debt.shared_expense_id == debt.shared_expense_id))
-    other = (await session.execute(
-        select(Debt).where(Debt.debtor_id == debt.debtor_id, Debt.id != debt.id, Debt.status.in_(("claimed", "settled")), scope).limit(1).with_for_update()
-    )).scalar_one_or_none()
+    scope = (
+        (Debt.bundle_id == debt.bundle_id)
+        if debt.kind == "bundle"
+        else (
+            (Debt.group_id == debt.group_id)
+            if debt.kind == "group"
+            else (Debt.shared_expense_id == debt.shared_expense_id)
+        )
+    )
+    other = (
+        await session.execute(
+            select(Debt)
+            .where(
+                Debt.debtor_id == debt.debtor_id,
+                Debt.id != debt.id,
+                Debt.status.in_(("claimed", "settled")),
+                scope,
+            )
+            .limit(1)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
     if ids and other is not None:
         other.expense_ids = list(dict.fromkeys([*(other.expense_ids or []), *ids]))
         ids = []
     if ids:
         now = datetime.now(timezone.utc)
-        for exp in (await session.execute(select(Expense).where(Expense.id.in_(ids)))).scalars().all():
+        for exp in (
+            (await session.execute(select(Expense).where(Expense.id.in_(ids))))
+            .scalars()
+            .all()
+        ):
             exp.voided_at = now
-        await session.execute(update(Share).where(Share.expense_id.in_(ids)).values(expense_id=None))
+        await session.execute(
+            update(Share).where(Share.expense_id.in_(ids)).values(expense_id=None)
+        )
     debt.status = "pending"
     debt.claimed_at = None
     debt.expense_ids = []
@@ -102,7 +134,9 @@ async def reject(session: AsyncSession, debt_id: int, by_user_id: int) -> Debt:
     return debt
 
 
-async def pay_amount(session: AsyncSession, debtor_id: int, creditor_id: int, amount: Decimal) -> tuple[list[Debt], list[Expense], Decimal]:
+async def pay_amount(
+    session: AsyncSession, debtor_id: int, creditor_id: int, amount: Decimal
+) -> tuple[list[Debt], list[Expense], Decimal]:
     """
     'I paid Surya 300': take exactly that much off what the debtor owes this person, oldest bill first. A bill bigger than
     what is left is cut in two: the paid part is marked paid (waiting for the other side to confirm), the rest stays unpaid.
@@ -111,24 +145,49 @@ async def pay_amount(session: AsyncSession, debtor_id: int, creditor_id: int, am
     amount = to_decimal(amount)
     if amount <= 0:
         raise DebtError("The amount must be more than zero.")
-    rows = list((await session.execute(
-        select(Debt).where(Debt.status == "pending", Debt.debtor_id == debtor_id, Debt.creditor_id == creditor_id).order_by(Debt.id).with_for_update()
-    )).scalars().all())
+    rows = list(
+        (
+            await session.execute(
+                select(Debt)
+                .where(
+                    Debt.status == "pending",
+                    Debt.debtor_id == debtor_id,
+                    Debt.creditor_id == creditor_id,
+                )
+                .order_by(Debt.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
     owed = sum((d.amount for d in rows), Decimal(0))
     if owed <= 0:
         raise DebtError("You don't owe them anything that is still unpaid.")
     if amount > owed:
-        raise DebtError(f"You only owe them {money(owed)}, so {money(amount)} is too much.")
+        raise DebtError(
+            f"You only owe them {money(owed)}, so {money(amount)} is too much."
+        )
     claimed: list[Debt] = []
     created: list[Expense] = []
     left = amount
     for d in rows:
         if left <= 0:
             break
-        if d.amount > left:  # cut the bill: `part` is what is paid now, `d` keeps the rest
+        if (
+            d.amount > left
+        ):  # cut the bill: `part` is what is paid now, `d` keeps the rest
             part = Debt(
-                debtor_id=d.debtor_id, creditor_id=d.creditor_id, amount=left, description=d.description, kind=d.kind,
-                bundle_id=d.bundle_id, shared_expense_id=d.shared_expense_id, group_id=d.group_id, detail=d.detail, status="pending",
+                debtor_id=d.debtor_id,
+                creditor_id=d.creditor_id,
+                amount=left,
+                description=d.description,
+                kind=d.kind,
+                bundle_id=d.bundle_id,
+                shared_expense_id=d.shared_expense_id,
+                group_id=d.group_id,
+                detail=d.detail,
+                status="pending",
             )
             d.amount -= left
             session.add(part)
@@ -143,12 +202,19 @@ async def pay_amount(session: AsyncSession, debtor_id: int, creditor_id: int, am
 
 async def net_all(session: AsyncSession, user_id: int) -> "list[Offset]":
     """Cancel every pair this person has unpaid debts with in BOTH directions (also ones that were left over, e.g. after a 'not yet')."""
-    rows = (await session.execute(
-        select(Debt.debtor_id, Debt.creditor_id).where(Debt.status == "pending", or_(Debt.debtor_id == user_id, Debt.creditor_id == user_id))
-    )).all()
+    rows = (
+        await session.execute(
+            select(Debt.debtor_id, Debt.creditor_id).where(
+                Debt.status == "pending",
+                or_(Debt.debtor_id == user_id, Debt.creditor_id == user_id),
+            )
+        )
+    ).all()
     pairs = {(d, c) for d, c in rows}
     out = []
-    for other in sorted({c if d == user_id else d for d, c in pairs if (c, d) in pairs}):
+    for other in sorted(
+        {c if d == user_id else d for d, c in pairs if (c, d) in pairs}
+    ):
         if (o := await offset_between(session, user_id, other)) is not None:
             out.append(o)
     return out
@@ -157,29 +223,73 @@ async def net_all(session: AsyncSession, user_id: int) -> "list[Offset]":
 async def dues(session: AsyncSession, user_id: int) -> tuple[list[Debt], list[Debt]]:
     """(what I owe, what I am owed): everything not yet settled."""
     live = ("pending", "claimed")
-    owe = (await session.execute(select(Debt).where(Debt.debtor_id == user_id, Debt.status.in_(live)).order_by(Debt.id))).scalars().all()
-    owed = (await session.execute(select(Debt).where(Debt.creditor_id == user_id, Debt.status.in_(live)).order_by(Debt.id))).scalars().all()
+    owe = (
+        (
+            await session.execute(
+                select(Debt)
+                .where(Debt.debtor_id == user_id, Debt.status.in_(live))
+                .order_by(Debt.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    owed = (
+        (
+            await session.execute(
+                select(Debt)
+                .where(Debt.creditor_id == user_id, Debt.status.in_(live))
+                .order_by(Debt.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return list(owe), list(owed)
 
 
-async def debts_needing_reminder(session: AsyncSession, every_hours: int, now: datetime | None = None) -> tuple[list[Debt], list[Debt]]:
+async def debts_needing_reminder(
+    session: AsyncSession, every_hours: int, now: datetime | None = None
+) -> tuple[list[Debt], list[Debt]]:
     """(unpaid debts to nudge the debtor about, 'did you receive it?' debts to nudge the creditor about)."""
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=every_hours)
-    due = or_(Debt.last_reminded_at.is_(None) & (Debt.created_at <= cutoff), Debt.last_reminded_at <= cutoff)
-    pending = (await session.execute(select(Debt).where(Debt.status == "pending", due).order_by(Debt.id))).scalars().all()
-    claimed = (await session.execute(select(Debt).where(Debt.status == "claimed", due).order_by(Debt.id))).scalars().all()
+    due = or_(
+        Debt.last_reminded_at.is_(None) & (Debt.created_at <= cutoff),
+        Debt.last_reminded_at <= cutoff,
+    )
+    pending = (
+        (
+            await session.execute(
+                select(Debt).where(Debt.status == "pending", due).order_by(Debt.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    claimed = (
+        (
+            await session.execute(
+                select(Debt).where(Debt.status == "claimed", due).order_by(Debt.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return list(pending), list(claimed)
 
 
 async def name_pair(session: AsyncSession, debt: Debt):
-    return await friends.get_user(session, debt.debtor_id), await friends.get_user(session, debt.creditor_id)
+    return await friends.get_user(session, debt.debtor_id), await friends.get_user(
+        session, debt.creditor_id
+    )
 
 
 # ---------------------------------------------------------------- netting: "you owe me 100, I owe you 100" cancels out
 @dataclass
 class Offset:
     """What was cancelled between two people. `settled` debts are gone; `reduced` ones remain, for a smaller amount."""
+
     person_a: int
     person_b: int
     amount: Decimal
@@ -208,12 +318,28 @@ async def offset_between(session: AsyncSession, a: int, b: int) -> Offset | None
     A debt cancelled completely counts as settled, and its debtor's share is recorded in their expenses, exactly as if they had paid.
     """
     lo, hi = sorted((a, b))
-    rows = list((await session.execute(
-        select(Debt).where(Debt.status == "pending", Debt.debtor_id.in_((lo, hi)), Debt.creditor_id.in_((lo, hi))).order_by(Debt.id).with_for_update()
-    )).scalars().all())
+    rows = list(
+        (
+            await session.execute(
+                select(Debt)
+                .where(
+                    Debt.status == "pending",
+                    Debt.debtor_id.in_((lo, hi)),
+                    Debt.creditor_id.in_((lo, hi)),
+                )
+                .order_by(Debt.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
     a_owes = [d for d in rows if d.debtor_id == a and d.creditor_id == b]
     b_owes = [d for d in rows if d.debtor_id == b and d.creditor_id == a]
-    cancel = min(sum((d.amount for d in a_owes), Decimal(0)), sum((d.amount for d in b_owes), Decimal(0)))
+    cancel = min(
+        sum((d.amount for d in a_owes), Decimal(0)),
+        sum((d.amount for d in b_owes), Decimal(0)),
+    )
     if cancel <= 0:
         return None
     result = Offset(a, b, cancel)
@@ -222,7 +348,11 @@ async def offset_between(session: AsyncSession, a: int, b: int) -> Offset | None
         settled, reduced = _apply(side, cancel)
         for d in settled:
             expenses = await _log_for(session, d)
-            d.status, d.settled_at, d.expense_ids = "settled", now, [e.id for e in expenses]
+            d.status, d.settled_at, d.expense_ids = (
+                "settled",
+                now,
+                [e.id for e in expenses],
+            )
         result.settled += settled
         result.reduced += reduced
     await session.flush()
@@ -242,8 +372,20 @@ async def offset_new(session: AsyncSession, new_debts: list[Debt]) -> list[Offse
     return out
 
 
-async def pending_between(session: AsyncSession, debtor_id: int, creditor_id: int) -> Decimal:
-    rows = (await session.execute(
-        select(Debt.amount).where(Debt.status == "pending", Debt.debtor_id == debtor_id, Debt.creditor_id == creditor_id)
-    )).scalars().all()
+async def pending_between(
+    session: AsyncSession, debtor_id: int, creditor_id: int
+) -> Decimal:
+    rows = (
+        (
+            await session.execute(
+                select(Debt.amount).where(
+                    Debt.status == "pending",
+                    Debt.debtor_id == debtor_id,
+                    Debt.creditor_id == creditor_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
     return sum((Decimal(x) for x in rows), Decimal(0))

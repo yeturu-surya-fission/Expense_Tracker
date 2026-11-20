@@ -46,7 +46,7 @@ finance_agent/
 
 ## Rules the code keeps
 
-- **Money is computed by code.** `policy/engine.py` is pure Python with exact decimals; the LLM only *reads* (which rule? how many nights?).
+- **Money is computed by code.** `policy/engine.py` is pure Python with exact decimals; the LLM only _reads_ (which rule? how many nights?).
 - **The manager decides.** The agent only recommends; nothing is approved without the manager's tap.
 - **The manager confirms the policy.** A parsed policy is shown back and saved only after "Save". Every save is a new version, and each claim records
   the version it was checked against.
@@ -56,4 +56,4 @@ finance_agent/
 ## Run it
 
 `docker compose up --build` starts it as the `finance` service (port 8002). Without Docker:
-`pip install -r requirements-finance.txt` then `python -m finance_agent` (settings: `.env.example`, section "Finance Agent").
+`uv sync --only-group finance` then `python -m finance_agent` (or `uv run python -m finance_agent`; settings: `.env.example`, section "Finance Agent").

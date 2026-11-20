@@ -7,13 +7,13 @@ There are **no bank or cash accounts**: "spent 300 on ice cream" simply adds ₹
 
 ## See it working
 
-| Personal chat | |
-|---|---|
-| ![Personal chat demo](assets/gif/personal-chat.gif) | ![Personal chat 1](assets/img/personal-chat-1.png) ![Personal chat 2](assets/img/personal-chat-2.png) |
+**Personal chat**
 
-| Group chat | |
-|---|---|
-| ![Group chat demo](assets/gif/group-chat.gif) | ![Group chat](assets/img/group-chat.png) |
+![Personal chat 1](assets/img/personal-chat-1.png) ![Personal chat 2](assets/img/personal-chat-2.png)
+
+**Group chat**
+
+![Group chat](assets/img/group-chat.png)
 
 **Company manager reimbursement scenario**
 
@@ -21,25 +21,26 @@ There are **no bank or cash accounts**: "spent 300 on ice cream" simply adds ₹
 
 ## What it does
 
-| | |
-|---|---|
-| 🔴 **Expenses** | "spent 300 on ice cream", "paid 1200 for petrol yesterday". Any phrasing, any language. Undo any entry. |
-| 🎯 **Budgets** | "set a limit of 3k for food". Alerts at 50%, 80% and 100%, once per month per threshold. |
-| 📊 **Reports** | Summary by category, any month / day / range, month-by-month trend, day-by-day view, with ◀ ▶ month buttons. |
-| 📄 **Statement import** | Send a bank-statement PDF: spending rows become expenses after you confirm (credits and ATM withdrawals are skipped). |
-| 👥 **Friends** | "add friend Surya 123456789" (nickname + Telegram id), or `/invite` for a link they just tap. |
-| 💸 **Split a bill** | "dinner 3000, split equally with Surya, Ravi and Anil". Everyone is told what they owe. |
-| 💳 **Dues** | `/dues`: one total per person (not one line per bill), with **✅ I paid** / **✅ Received** buttons. What two friends owe each other cancels out automatically. Pay only part: "I paid Surya 300". |
+|                            |                                                                                                                                                                                                                                                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🔴 **Expenses**            | "spent 300 on ice cream", "paid 1200 for petrol yesterday". Any phrasing, any language. Undo any entry.                                                                                                                                                                                                 |
+| 🎯 **Budgets**             | "set a limit of 3k for food". Alerts at 50%, 80% and 100%, once per month per threshold.                                                                                                                                                                                                                |
+| 📊 **Reports**             | Summary by category, any month / day / range, month-by-month trend, day-by-day view, with ◀ ▶ month buttons.                                                                                                                                                                                            |
+| 📄 **Statement import**    | Send a bank-statement PDF: spending rows become expenses after you confirm (credits and ATM withdrawals are skipped).                                                                                                                                                                                   |
+| 👥 **Friends**             | "add friend Surya 123456789" (nickname + Telegram id), or `/invite` for a link they just tap.                                                                                                                                                                                                           |
+| 💸 **Split a bill**        | "dinner 3000, split equally with Surya, Ravi and Anil". Everyone is told what they owe.                                                                                                                                                                                                                 |
+| 💳 **Dues**                | `/dues`: one total per person (not one line per bill), with **✅ I paid** / **✅ Received** buttons. What two friends owe each other cancels out automatically. Pay only part: "I paid Surya 300".                                                                                                      |
 | 🧾 **Work reimbursements** | `/reimburse`: work expenses kept **apart** from your spending, "will I get a refund on this room?" answered from your company's real policy, claims checked by the company's **Finance Agent** (over A2A) and approved by your manager in Telegram. See [docs/REIMBURSEMENT.md](docs/REIMBURSEMENT.md). |
-| 🧳 **Group chats** | Add the bot to a Telegram group: it sets itself up. Anyone mentions it to add expenses, then "split the bill" posts who owes what and DMs each person their bill. |
+| 🧳 **Group chats**         | Add the bot to a Telegram group: it sets itself up. Anyone mentions it to add expenses, then "split the bill" posts who owes what and DMs each person their bill.                                                                                                                                       |
 
 ### Splitting a bill
-1. You say: *"went to dining, paid 3k, split equally with Surya, Ravi, Anil"* (you are included: ₹750 each).
-2. If you didn't say how to split, the bot **asks** with buttons: *Equally* / *I'll tell the amounts*.
-   With 4+ people it first asks: *one-off split* or *create a group*.
-3. **Your** ₹750 is saved as your expense. Each friend gets a private message: *"Kiran paid for dining. Your share: ₹750. [✅ I paid]"*
+
+1. You say: _"went to dining, paid 3k, split equally with Surya, Ravi, Anil"_ (you are included: ₹750 each).
+2. If you didn't say how to split, the bot **asks** with buttons: _Equally_ / _I'll tell the amounts_.
+   With 4+ people it first asks: _one-off split_ or _create a group_.
+3. **Your** ₹750 is saved as your expense. Each friend gets a private message: _"Kiran paid for dining. Your share: ₹750. [✅ I paid]"_
 4. A friend taps **I paid**: the message disappears and their ₹750 is logged in **their** expenses.
-   The person owed gets *"Surya says he paid ₹750. [✅ Received] [✖ Not yet]"*.
+   The person owed gets _"Surya says he paid ₹750. [✅ Received] [✖ Not yet]"_.
    **Received** settles it; **Not yet** puts it back on his list and removes the expense again.
 5. Unpaid shares are re-sent every 48 hours (`REMINDER_EVERY_HOURS`). `/dues` shows who owes whom.
 
@@ -47,42 +48,46 @@ There are **no bank or cash accounts**: "spent 300 on ice cream" simply adds ₹
 split (your ₹250 share), so the petrol is not counted twice. This only happens for the same amount, logged within the last hour.
 
 ### Dues, paying and netting
-- **One total per person.** `/dues` shows *"You owe Surya ₹350"*, not a line per tea or pizza. Under it: **✅ I paid Surya ₹350**.
+
+- **One total per person.** `/dues` shows _"You owe Surya ₹350"_, not a line per tea or pizza. Under it: **✅ I paid Surya ₹350**.
   For money owed to you that was marked paid: **✅ Received from Surya ₹350** and **✖ Not yet**. The message edits in place.
 - **Opposite debts cancel.** If Surya owes you ₹50 and you owe him ₹50, both are settled automatically and both of you get a
-  *"🔁 netted off"* message. Both people's own shares stay in their expenses. Netting runs when a new split is made and again whenever
+  _"🔁 netted off"_ message. Both people's own shares stay in their expenses. Netting runs when a new split is made and again whenever
   `/dues` is opened. Debts already marked "paid" are in flight and left alone.
-- **Pay part of it.** *"I paid Surya 300"* takes exactly ₹300 off, oldest bill first (a bigger bill is cut in two). The rest stays due,
-  and Surya is asked to confirm **Received** or **Not yet**. *"Not yet"* puts back only that part. No amount (*"paid Ravi back"*) means everything.
+- **Pay part of it.** _"I paid Surya 300"_ takes exactly ₹300 off, oldest bill first (a bigger bill is cut in two). The rest stays due,
+  and Surya is asked to confirm **Received** or **Not yet**. _"Not yet"_ puts back only that part. No amount (_"paid Ravi back"_) means everything.
 - A netted split can no longer be cancelled with the **Cancel split** button.
 
 ## Commands
+
 Type `/` in Telegram to see them. There is no permanent keyboard under the text box.
 
-| Private chat | |
-|---|---|
-| `/summary` | Spending summary with ◀ ▶ month buttons |
-| `/history` | Recent expenses (`/recent` works too) |
-| `/budgets` | Budget progress |
-| `/daily` · `/trend` | Day-by-day and month-by-month spending |
-| `/friends` · `/invite` | Your friends; your invite link |
-| `/dues` | Who owes whom, with the pay buttons |
-| `/reimburse` | Work reimbursements: add, send a claim, see claims, ask the policy |
-| `/join CODE` · `/claims` · `/policy <question>` | Join your company · your claims · ask the company policy |
-| `/undo` · `/help` | Undo the last expense; what you can say |
+| Private chat                                    |                                                                    |
+| ----------------------------------------------- | ------------------------------------------------------------------ |
+| `/summary`                                      | Spending summary with ◀ ▶ month buttons                            |
+| `/history`                                      | Recent expenses (`/recent` works too)                              |
+| `/budgets`                                      | Budget progress                                                    |
+| `/daily` · `/trend`                             | Day-by-day and month-by-month spending                             |
+| `/friends` · `/invite`                          | Your friends; your invite link                                     |
+| `/dues`                                         | Who owes whom, with the pay buttons                                |
+| `/reimburse`                                    | Work reimbursements: add, send a claim, see claims, ask the policy |
+| `/join CODE` · `/claims` · `/policy <question>` | Join your company · your claims · ask the company policy           |
+| `/undo` · `/help`                               | Undo the last expense; what you can say                            |
 
-| Group chat | |
-|---|---|
-| `/settle` | Settle up the group (asks first) |
-| `/people` | Who the bot knows in this group |
+| Group chat |                                                    |
+| ---------- | -------------------------------------------------- |
+| `/settle`  | Settle up the group (asks first)                   |
+| `/people`  | Who the bot knows in this group                    |
 | `/summary` | Who paid what and who is owed (`/group` works too) |
-| `/help` | How to use the bot here |
+| `/help`    | How to use the bot here                            |
 
 ### Several bills, different payers (a party night)
-*"I paid 2500 for food, Surya paid 600 for ice cream and Komal paid 3500 for the bar. Who pays whom?"*
+
+_"I paid 2500 for food, Surya paid 600 for ice cream and Komal paid 3500 for the bar. Who pays whom?"_
 The bot takes all the bills **at once**, shares the ₹6,600 equally (₹2,200 each) and nets everyone's paid-vs-share, so you get the
 **fewest payments** instead of one per bill. The reply first says **who pays whom**, then shows each person's maths
-(*owes = share − paid*) with the bills behind it, so anyone can check it:
+(_owes = share − paid_) with the bills behind it, so anyone can check it:
+
 ```
 💸 Who pays whom
 • surya → Komal Kumar  ₹1,300
@@ -96,11 +101,13 @@ The bot takes all the bills **at once**, shares the ₹6,600 equally (₹2,200 e
 • You get back ₹300
    (share ₹2,200: ... · paid ₹2,500: party food ₹2,500)
 ```
+
 Each person also gets their own bill privately (whom to pay, the same items, and an **I paid** button); people owed money are told what
 they'll receive, and your own ₹2,200 is saved to your expenses. A person who owes two people records their share once, on their first
 payment. The odd paise are spread across bills so amounts stay clean. Group settle-up (`/settle`) uses the same format.
 
 ### Group chats (trips, flatmates, any outing)
+
 1. **You create a Telegram group, add your friends, and add the bot.** That's the whole setup: the bot makes the expense group
    by itself (named after the chat) and posts a short welcome. There is no `/creategroup`, no `/join`, no button to press.
 2. **Anyone in the group can use it, friends of yours or not**, by **mentioning the bot**:
@@ -108,7 +115,7 @@ payment. The odd paise are spread across bills so amounts stay clean. Group sett
    - `@bot Surya paid 600 for ice cream`
    - `@bot paid 900 for the cab, split between me and Surya`
    - the whole outing at once: `@bot I paid 2500 for food, Surya 600 for ice cream, Komal 3500 for the bar, split it`
-   If the split isn't stated the bot **asks**: *Equally* / *Always equally in this group* / *I'll tell the amounts*.
+     If the split isn't stated the bot **asks**: _Equally_ / _Always equally in this group_ / _I'll tell the amounts_.
 3. `@bot split the bill` (or `/settle`) asks for confirmation, then posts in the group **who pays whom** and **each person's maths with
    the bills behind it**, as above. Each person also gets their own bill privately, with the same items and an **I paid** button.
    People who owe nothing are told what they're owed; shares are saved to everyone's own expenses.
@@ -117,12 +124,13 @@ payment. The odd paise are spread across bills so amounts stay clean. Group sett
 **Who counts as a member.** A bot cannot list a group's members, so it learns them from: the person who added it, "X joined" notices
 (people who leave are left out of future splits), your friends who are in the chat (checked once when it's added; this is only
 guaranteed if the bot is a group admin), and **anyone who mentions it**. Before a split it compares its list with Telegram's member count
-and says *"I only know 3 of the 5 people, the others should mention me once"* so nobody is left out silently.
+and says _"I only know 3 of the 5 people, the others should mention me once"_ so nobody is left out silently.
 
 **Access.** Everyone in a group the owner added the bot to can use it, in the group and in their private chat with it. If a stranger
 adds the bot to some other group, it leaves. Group members cannot add the bot to further groups.
 
 > **Telegram limits to know:**
+>
 > - A bot can only message people who pressed **Start** on it once. If someone owes money and hasn't, the bot **tags them in the group
 >   with a Start button** and their bill arrives the moment they press it.
 > - Bots can't create groups or add members: you do that part.
@@ -238,31 +246,34 @@ flowchart LR
     AG --> DB2[("Postgres<br/>agent memory")]
 ```
 
-| Folder | Role |
-|---|---|
-| `mcp_server/domain/` | **All the logic, no LLM, no Telegram.** `expenses`, `budgets`, `reports`/`views`, `friends`, `splits` (shares to the paisa), `groups` (settle-up), `debts` (pay / confirm lifecycle), `notices` + `outbox` (every message to other people), `statements` |
-| `mcp_server/tools/` | The MCP tools and the gate every call passes (scope, chat context, rate limit, idempotency, audit). Private and group chats see different tools |
-| `mcp_server/auth/` | RS256 JWT tokens, JWKS, `/auth/token`, `/auth/session`, `/auth/revoke` |
-| `mcp_server/reimbursement/` | Work expenses and claims, the A2A client to the Finance Agent, and the webhook that receives its decisions |
-| `mcp_server/db/`, `migrations/` | SQLAlchemy models and Alembic migrations |
-| `app/mcp_client/` | The bot's only way to the data: token manager + MCP calls |
-| `app/agent/` | LangGraph graph, runner (pause/resume), prompt, tool lists per chat type, LLM factory (CodeVector), statement parser |
-| `app/bot/` | Telegram: private chat, group chat, payment buttons, statement upload, `/reimburse`, outbox delivery |
-| `finance_agent/` | **The Finance Agent**, a separate service: company policy, policy Q&A, claim checks, the A2A endpoint, and the manager's own Telegram bot. File-by-file map in [finance_agent/README.md](finance_agent/README.md) |
+| Folder                          | Role                                                                                                                                                                                                                                                     |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcp_server/domain/`            | **All the logic, no LLM, no Telegram.** `expenses`, `budgets`, `reports`/`views`, `friends`, `splits` (shares to the paisa), `groups` (settle-up), `debts` (pay / confirm lifecycle), `notices` + `outbox` (every message to other people), `statements` |
+| `mcp_server/tools/`             | The MCP tools and the gate every call passes (scope, chat context, rate limit, idempotency, audit). Private and group chats see different tools                                                                                                          |
+| `mcp_server/auth/`              | RS256 JWT tokens, JWKS, `/auth/token`, `/auth/session`, `/auth/revoke`                                                                                                                                                                                   |
+| `mcp_server/reimbursement/`     | Work expenses and claims, the A2A client to the Finance Agent, and the webhook that receives its decisions                                                                                                                                               |
+| `mcp_server/db/`, `migrations/` | SQLAlchemy models and Alembic migrations                                                                                                                                                                                                                 |
+| `app/mcp_client/`               | The bot's only way to the data: token manager + MCP calls                                                                                                                                                                                                |
+| `app/agent/`                    | LangGraph graph, runner (pause/resume), prompt, tool lists per chat type, LLM factory (CodeVector), statement parser                                                                                                                                     |
+| `app/bot/`                      | Telegram: private chat, group chat, payment buttons, statement upload, `/reimburse`, outbox delivery                                                                                                                                                     |
+| `finance_agent/`                | **The Finance Agent**, a separate service: company policy, policy Q&A, claim checks, the A2A endpoint, and the manager's own Telegram bot. File-by-file map in [finance_agent/README.md](finance_agent/README.md)                                        |
 
 ### How a message flows
+
 `agent` asks the LLM which tools to call → `tools` runs them **one per step**, each as an MCP request made with a token for the person who is
 chatting → `respond` builds the reply from the tool output (no second LLM call). The LLM never writes text to the user; anything off-topic gets
-a fixed refusal. If something is missing (*how to split?*, *one-off or group?*, *settle now?*) the server answers `input_required` **before
+a fixed refusal. If something is missing (_how to split?_, _one-off or group?_, _settle now?_) the server answers `input_required` **before
 writing anything**; the bot shows buttons, pauses (saved in Postgres, so it survives restarts), and calls the same tool again with the answer.
 
 ### Security in one paragraph
+
 Every MCP request is authenticated and authorized: RS256 JWT bound to this server, 10-minute service tokens and 30-minute per-person session
 tokens, revocation, scope and chat-context checks, rate limiting and an audit log. Tools take no identity argument (the person comes from
 the token), writes carry idempotency keys, and the architecture is enforced by a test (the bot may not import the server, SQLAlchemy or
 a database driver).
 
 ### Data
+
 `users`, `friends` (nicknames are private to each owner), `expenses` (never deleted, undo = `voided_at`), `budgets`, `budget_alerts`,
 `groups`, `group_members` (with `left_at`), `shared_expenses` + `shares` (who owes how much), `debts` (pending → claimed → settled),
 `statement_imports`, `company_links`, `work_expenses`, `work_claims`, `policy_chats` (work reimbursements), plus `outbox`, `audit_log`, `revoked_tokens`,
@@ -281,7 +292,7 @@ a database driver).
    The database is **new** (`expense_mcp`, volume `pgdata_mcp`; the bot's `expense_bot`, volume `pgdata_bot`); the data of the earlier
    versions (volumes `pgdata`, `pgdata_expense`) is untouched.
 
-**Local (no Docker):** Python 3.12, three Postgres databases, `pip install -r requirements.txt`, then in three terminals
+**Local (no Docker):** Python 3.12, three Postgres databases, `uv sync`, then in three terminals
 `python -m mcp_server`, `python run.py` (not plain uvicorn on Windows: see `run.py`) and `python -m finance_agent`. Set `MCP_DATABASE_URL`,
 `BOT_DATABASE_URL`, `MCP_SERVER_URL` and `FINANCE_DATABASE_URL` in `.env` (without the Finance Agent running, only the reimbursement actions say "the finance service isn't reachable"; everything else works).
 
@@ -291,10 +302,11 @@ a database driver).
 `ALLOWED_TELEGRAM_IDS` (enforced by the MCP server) limits who can start using the bot; anyone you add as a friend (or who opens your invite
 link) can use it too.
 
-**Tests:** `pip install -r requirements-dev.txt`, point `TEST_MCP_DATABASE_URL` (asyncpg URL), `TEST_BOT_DATABASE_URL` (psycopg URL) and `TEST_FINANCE_DATABASE_URL` (asyncpg URL) at
-scratch databases (the finance tests drop and recreate their tables), then `pytest`. They run the real server in-process and talk to it only through MCP, like the bot does.
+**Tests:** `uv sync`, point `TEST_MCP_DATABASE_URL` (asyncpg URL), `TEST_BOT_DATABASE_URL` (psycopg URL) and `TEST_FINANCE_DATABASE_URL` (asyncpg URL) at
+scratch databases (the finance tests drop and recreate their tables), then `pytest` (or `uv run pytest`). They run the real server in-process and talk to it only through MCP, like the bot does.
 
 ## Limits
+
 - Friends must press Start before they can be messaged.
 - A tool call can't depend on another tool's result in the same message (the AI picks all tools up front).
 - The LLM gateway can be rate limited; the bot says so instead of hanging. One message is cut off after 60 seconds.
@@ -304,20 +316,23 @@ scratch databases (the finance tests drop and recreate their tables), then `pyte
 - Work reimbursements: receipts are a yes/no answer (no photo reading yet), one company per person, and "paid" is marked by the manager. More in [docs/REIMBURSEMENT.md](docs/REIMBURSEMENT.md#limits-today).
 
 ## Story, blogs and gists
+
 - 🌱 [Origin story](docs/ORIGIN_STORY.md): how five Python interns at Fission Labs went from a shared chai tab to a multi-agent system
 - ✍️ Blogs: [Fission Labs style](docs/blog/fissionlabs-style.md) · [Medium style](docs/blog/medium-style.md)
 - 🧩 Code gists ([sources](docs/gists/README.md)):
 
-| Gist | Idea |
-|---|---|
-| Architecture boundary test | Architecture rules that fail CI |
-| Pooled policy caps | The model reads the policy, code does the sums |
-| Signed webhook | HMAC-signed, retried, idempotent decisions |
+| Gist                       | Idea                                           |
+| -------------------------- | ---------------------------------------------- |
+| Architecture boundary test | Architecture rules that fail CI                |
+| Pooled policy caps         | The model reads the policy, code does the sums |
+| Signed webhook             | HMAC-signed, retried, idempotent decisions     |
 
 ## Team
+
 Built by five Python interns at Fission Labs.
 
 ## More documentation
+
 - 🏗️ [Architecture](docs/ARCHITECTURE.md): the two services, tokens, chat contexts, agent graph, outbox, data model, deployment, safety
 - 🧾 [Work reimbursements](docs/REIMBURSEMENT.md): the Finance Agent, the manager's side, the A2A flow, setup and limits
 - 🔌 [MCP server](docs/MCP.md): endpoints, tokens, the result format, asking the human, tools, running it

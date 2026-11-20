@@ -1,4 +1,5 @@
 """Settings of the Telegram bot. It holds the Telegram token, the LLM key, and the credentials to reach the MCP server: nothing else."""
+
 from functools import lru_cache
 from typing import Literal
 
@@ -19,7 +20,9 @@ class Settings(BaseSettings):
     # codevector llm (OpenAI-compatible)
     codevector_model: str = "dev-model-alpha"
     codevector_api_key: str = ""
-    codevector_base_url: str = "https://coding-gateway.fissionlabs.com/gateway/openai/v1"
+    codevector_base_url: str = (
+        "https://coding-gateway.fissionlabs.com/gateway/openai/v1"
+    )
     llm_temperature: float = 0.0
 
     # the MCP server: the ONLY way this process reaches expense data

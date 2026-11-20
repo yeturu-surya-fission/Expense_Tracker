@@ -4,6 +4,7 @@ Turning a company's policy text into structured rules, and editing those rules f
 The model proposes; the manager confirms. Nothing here is saved: callers show `rules_text(...)` / `diff_rules(...)` to the
 manager first. Only validated `Rule` objects ever leave this module.
 """
+
 import json
 import logging
 
@@ -96,7 +97,8 @@ def _validate(raw) -> list[Rule]:
         log.warning("no rules in the model's answer: %.300r", raw)
         raise PolicyParseError(
             "I couldn't turn that into rules. Try again (the text may need to be cleaner), or describe the limits in a few short lines, "
-            "for example: “hotels up to 6000 a night, receipt needed; meals up to 1000 a day; gym is not reimbursed”.", retryable=True,
+            "for example: “hotels up to 6000 a night, receipt needed; meals up to 1000 a day; gym is not reimbursed”.",
+            retryable=True,
         )
     rules: list[Rule] = []
     seen: set[str] = set()
@@ -104,10 +106,17 @@ def _validate(raw) -> list[Rule]:
         try:
             rule = Rule.model_validate(it)
         except (ValidationError, ArithmeticError, ValueError) as e:
-            first = e.errors()[0]["loc"] if isinstance(e, ValidationError) and e.errors() else ()
+            first = (
+                e.errors()[0]["loc"]
+                if isinstance(e, ValidationError) and e.errors()
+                else ()
+            )
             what = first[0] if first else "format"
             log.warning("a rule was unreadable (%s): %.200r", what, it)
-            raise PolicyParseError(f"One of the rules was unclear ({what}). Please try again or rephrase that part.", retryable=True) from e
+            raise PolicyParseError(
+                f"One of the rules was unclear ({what}). Please try again or rephrase that part.",
+                retryable=True,
+            ) from e
         base, n = rule.id, 2
         while rule.id in seen:  # two rules must not share an id
             rule.id, n = f"{base}_{n}", n + 1
@@ -117,23 +126,40 @@ def _validate(raw) -> list[Rule]:
 
 
 def _dump(rules: list[Rule]) -> str:
-    return json.dumps([r.model_dump(mode="json", exclude_defaults=True) for r in rules], ensure_ascii=False)
+    return json.dumps(
+        [r.model_dump(mode="json", exclude_defaults=True) for r in rules],
+        ensure_ascii=False,
+    )
 
 
 async def parse_policy(llm: LLM, text: str) -> list[Rule]:
     """The rules in a pasted policy."""
     try:
-        return _validate(await llm.json(SYSTEM_PARSE, text[:30000], timeout=settings.policy_timeout))
+        return _validate(
+            await llm.json(SYSTEM_PARSE, text[:30000], timeout=settings.policy_timeout)
+        )
     except LLMError as e:
-        raise PolicyParseError(f"I couldn't read that just now ({e}). Your text is saved: tap Try again.", retryable=True) from e
+        raise PolicyParseError(
+            f"I couldn't read that just now ({e}). Your text is saved: tap Try again.",
+            retryable=True,
+        ) from e
 
 
 async def edit_policy(llm: LLM, current: list[Rule], instruction: str) -> list[Rule]:
     """The current rules with one change from the manager ('raise the hotel cap to 8000')."""
     try:
-        return _validate(await llm.json(SYSTEM_EDIT, f"CURRENT RULES:\n{_dump(current)}\n\nINSTRUCTION:\n{instruction[:2000]}", timeout=settings.policy_timeout))
+        return _validate(
+            await llm.json(
+                SYSTEM_EDIT,
+                f"CURRENT RULES:\n{_dump(current)}\n\nINSTRUCTION:\n{instruction[:2000]}",
+                timeout=settings.policy_timeout,
+            )
+        )
     except LLMError as e:
-        raise PolicyParseError(f"I couldn't apply that just now ({e}). Your instruction is saved: tap Try again.", retryable=True) from e
+        raise PolicyParseError(
+            f"I couldn't apply that just now ({e}). Your instruction is saved: tap Try again.",
+            retryable=True,
+        ) from e
 
 
 def rules_text(rules: list[Rule]) -> str:
@@ -149,5 +175,9 @@ def diff_rules(old: list[Rule], new: list[Rule]) -> list[str]:
     before, after = {r.id: r for r in old}, {r.id: r for r in new}
     lines = [f"➕ New: {describe(r)}" for i, r in after.items() if i not in before]
     lines += [f"➖ Removed: {r.name}" for i, r in before.items() if i not in after]
-    lines += [f"✏️ {describe(before[i])}\n    → {describe(r)}" for i, r in after.items() if i in before and not _same(before[i], r)]
+    lines += [
+        f"✏️ {describe(before[i])}\n    → {describe(r)}"
+        for i, r in after.items()
+        if i in before and not _same(before[i], r)
+    ]
     return lines

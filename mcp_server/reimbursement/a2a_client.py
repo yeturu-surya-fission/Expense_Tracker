@@ -5,6 +5,7 @@ For every call we sign a short-lived token with the same RS256 key that signs ou
 against our public JWKS), open the agent's card, send one message, and read back the task: its state (completed /
 input-required / failed), the text for the human, and the structured data.
 """
+
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -54,23 +55,54 @@ def mint_token(user_id: int, name: str) -> str:
     now = int(time.time())
     keys = get_keys().current
     claims = {
-        "iss": settings.issuer, "aud": audience(), "sub": f"user:{user_id}", "name": (name or "Employee")[:128], "scope": "a2a",
-        "iat": now, "nbf": now, "exp": now + settings.a2a_token_ttl_seconds, "jti": uuid.uuid4().hex,
+        "iss": settings.issuer,
+        "aud": audience(),
+        "sub": f"user:{user_id}",
+        "name": (name or "Employee")[:128],
+        "scope": "a2a",
+        "iat": now,
+        "nbf": now,
+        "exp": now + settings.a2a_token_ttl_seconds,
+        "jti": uuid.uuid4().hex,
     }
-    return jwt.encode(claims, keys.private_pem, algorithm="RS256", headers={"kid": keys.kid, "typ": "at+jwt"})
+    return jwt.encode(
+        claims,
+        keys.private_pem,
+        algorithm="RS256",
+        headers={"kid": keys.kid, "typ": "at+jwt"},
+    )
 
 
 async def call(
-    user_id: int, name: str, skill: str, payload: dict, text: str, *, task_id: str | None = None, context_id: str | None = None,
+    user_id: int,
+    name: str,
+    skill: str,
+    payload: dict,
+    text: str,
+    *,
+    task_id: str | None = None,
+    context_id: str | None = None,
 ) -> Reply:
     """Send one A2A message to the Finance Agent. Pass `task_id` to continue a task that is waiting for an answer."""
-    http = httpx.AsyncClient(headers={"Authorization": f"Bearer {mint_token(user_id, name)}"}, transport=_transport, timeout=60)
+    http = httpx.AsyncClient(
+        headers={"Authorization": f"Bearer {mint_token(user_id, name)}"},
+        transport=_transport,
+        timeout=60,
+    )
     client = None
     try:
-        client = await ClientFactory(ClientConfig(httpx_client=http, streaming=False)).create_from_url(settings.finance_agent_url.rstrip("/"))
+        client = await ClientFactory(
+            ClientConfig(httpx_client=http, streaming=False)
+        ).create_from_url(settings.finance_agent_url.rstrip("/"))
         message = Message(
-            role=Role.ROLE_USER, message_id=uuid.uuid4().hex, task_id=task_id or None, context_id=context_id or None,
-            parts=[new_text_part(text or skill), new_data_part({"skill": skill, **payload})],
+            role=Role.ROLE_USER,
+            message_id=uuid.uuid4().hex,
+            task_id=task_id or None,
+            context_id=context_id or None,
+            parts=[
+                new_text_part(text or skill),
+                new_data_part({"skill": skill, **payload}),
+            ],
         )
         last = None
         async for event in client.send_message(SendMessageRequest(message=message)):
@@ -87,9 +119,17 @@ async def call(
         task = last.task
         msg = task.status.message
         data = next((d for d in get_data_parts(msg.parts) if isinstance(d, dict)), {})
-        return Reply(STATES.get(task.status.state, "working"), get_message_text(msg), data, task.id, task.context_id)
+        return Reply(
+            STATES.get(task.status.state, "working"),
+            get_message_text(msg),
+            data,
+            task.id,
+            task.context_id,
+        )
     if last.HasField("message"):
         msg = last.message
         data = next((d for d in get_data_parts(msg.parts) if isinstance(d, dict)), {})
-        return Reply("completed", get_message_text(msg), data, msg.task_id, msg.context_id)
+        return Reply(
+            "completed", get_message_text(msg), data, msg.task_id, msg.context_id
+        )
     raise FinanceUnavailable("unexpected response")

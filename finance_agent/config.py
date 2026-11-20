@@ -1,4 +1,5 @@
 """Settings of the Finance Agent. It has its own database, its own Telegram bot (for the manager) and its own secrets."""
+
 from functools import lru_cache
 
 from pydantic import AliasChoices, Field, field_validator
@@ -6,10 +7,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=(".env", "finance_agent/.env"), env_prefix="FINANCE_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(".env", "finance_agent/.env"), env_prefix="FINANCE_", extra="ignore"
+    )
 
     log_level: str = "INFO"
-    database_url: str = "postgresql+asyncpg://expense:expense@localhost:5432/expense_finance"
+    database_url: str = (
+        "postgresql+asyncpg://expense:expense@localhost:5432/expense_finance"
+    )
     auto_create_tables: bool = True
 
     # where we are on the network
@@ -31,15 +36,28 @@ class Settings(BaseSettings):
     webhook_secret: str = ""
 
     # the LLM that reads policies (same CodeVector gateway the expense bot uses)
-    codevector_api_key: str = Field("", validation_alias=AliasChoices("FINANCE_CODEVECTOR_API_KEY", "CODEVECTOR_API_KEY"))
-    codevector_model: str = Field("dev-model-alpha", validation_alias=AliasChoices("FINANCE_CODEVECTOR_MODEL", "CODEVECTOR_MODEL"))
+    codevector_api_key: str = Field(
+        "",
+        validation_alias=AliasChoices(
+            "FINANCE_CODEVECTOR_API_KEY", "CODEVECTOR_API_KEY"
+        ),
+    )
+    codevector_model: str = Field(
+        "dev-model-alpha",
+        validation_alias=AliasChoices("FINANCE_CODEVECTOR_MODEL", "CODEVECTOR_MODEL"),
+    )
     codevector_base_url: str = Field(
-        "https://coding-gateway.fissionlabs.com/gateway/openai/v1", validation_alias=AliasChoices("FINANCE_CODEVECTOR_BASE_URL", "CODEVECTOR_BASE_URL")
+        "https://coding-gateway.fissionlabs.com/gateway/openai/v1",
+        validation_alias=AliasChoices(
+            "FINANCE_CODEVECTOR_BASE_URL", "CODEVECTOR_BASE_URL"
+        ),
     )
     llm_timeout: int = 45  # a quick answer (a question, one item)
     policy_timeout: int = 150  # reading or editing a whole policy writes a lot of JSON: it is allowed longer
 
-    currency_symbol: str = Field("₹", validation_alias=AliasChoices("FINANCE_CURRENCY_SYMBOL", "CURRENCY_SYMBOL"))
+    currency_symbol: str = Field(
+        "₹", validation_alias=AliasChoices("FINANCE_CURRENCY_SYMBOL", "CURRENCY_SYMBOL")
+    )
 
     @field_validator("*", mode="before")
     @classmethod

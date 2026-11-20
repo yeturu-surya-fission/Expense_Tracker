@@ -1,4 +1,5 @@
 """The MCP server: tools + resources + auth, served over Streamable HTTP at <public_url>/mcp."""
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -34,10 +35,21 @@ class ScopedMCPServer(MCPServer):
         token = get_access_token()
         if token is None:
             return []
-        scopes, chat = set(token.scopes or []), (token.claims or {}).get("chat_type", "private")
-        if "platform" in scopes:  # a platform client (the bot) builds tool definitions for the people it serves
+        scopes, chat = (
+            set(token.scopes or []),
+            (token.claims or {}).get("chat_type", "private"),
+        )
+        if (
+            "platform" in scopes
+        ):  # a platform client (the bot) builds tool definitions for the people it serves
             return tools
-        return [t for t in tools if t.name in SPECS and SPECS[t.name].scope in scopes and chat in SPECS[t.name].contexts]
+        return [
+            t
+            for t in tools
+            if t.name in SPECS
+            and SPECS[t.name].scope in scopes
+            and chat in SPECS[t.name].contexts
+        ]
 
 
 def create_mcp() -> MCPServer:
@@ -67,7 +79,9 @@ def create_app():
         json_response=True,
         max_request_body_size=settings.max_request_bytes,
         transport_security=TransportSecuritySettings(
-            enable_dns_rebinding_protection=True, allowed_hosts=settings.hosts, allowed_origins=sorted(settings.origins),
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=settings.hosts,
+            allowed_origins=sorted(settings.origins),
         ),
     )
     inner = app.router.lifespan_context
@@ -78,6 +92,7 @@ def create_app():
         background: list[asyncio.Task] = []
         if settings.reminders_enabled:
             from mcp_server.jobs import reminder_loop
+
             background.append(asyncio.create_task(reminder_loop()))
         try:
             async with inner(a):

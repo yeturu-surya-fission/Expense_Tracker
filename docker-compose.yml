@@ -47,7 +47,7 @@ services:
       dockerfile: Dockerfile.mcp
     environment:
       MCP_DATABASE_URL: postgresql+asyncpg://expense:${MCP_DB_PASSWORD:-expense}@mcp-db:5432/expense_mcp
-      MCP_AUTO_CREATE_TABLES: "false"   # Alembic creates the schema
+      MCP_AUTO_CREATE_TABLES: "false" # Alembic creates the schema
       MCP_ENV: ${MCP_ENV:-dev}
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://mcp:8001}
       MCP_BOT_CLIENT_SECRET: ${MCP_BOT_CLIENT_SECRET:?set MCP_BOT_CLIENT_SECRET in .env (a long random string shared with the bot)}
@@ -65,7 +65,13 @@ services:
     depends_on:
       mcp-db: { condition: service_healthy }
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/healthz', timeout=3).status == 200 else 1)"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/healthz', timeout=3).status == 200 else 1)",
+        ]
       interval: 5s
       retries: 20
     restart: unless-stopped
@@ -99,8 +105,8 @@ services:
       dockerfile: Dockerfile.finance
     environment:
       FINANCE_DATABASE_URL: postgresql+asyncpg://expense:${FINANCE_DB_PASSWORD:-expense}@finance-db:5432/expense_finance
-      FINANCE_PUBLIC_URL: http://finance:8002   # must equal MCP_FINANCE_AGENT_URL above (tokens are addressed to it)
-      FINANCE_TRUSTED_ISSUER: ${MCP_PUBLIC_URL:-http://mcp:8001}   # the expense tracker's issuer: tokens signed by anyone else are refused
+      FINANCE_PUBLIC_URL: http://finance:8002 # must equal MCP_FINANCE_AGENT_URL above (tokens are addressed to it)
+      FINANCE_TRUSTED_ISSUER: ${MCP_PUBLIC_URL:-http://mcp:8001} # the expense tracker's issuer: tokens signed by anyone else are refused
       FINANCE_TRUSTED_JWKS_URL: http://mcp:8001/.well-known/jwks.json
       FINANCE_TRACKER_WEBHOOK_URL: http://mcp:8001/a2a/webhook
       FINANCE_WEBHOOK_SECRET: ${FINANCE_WEBHOOK_SECRET:?set FINANCE_WEBHOOK_SECRET in .env}
@@ -114,7 +120,13 @@ services:
     depends_on:
       finance-db: { condition: service_healthy }
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8002/healthz', timeout=3).status == 200 else 1)"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8002/healthz', timeout=3).status == 200 else 1)",
+        ]
       interval: 5s
       retries: 20
     restart: unless-stopped

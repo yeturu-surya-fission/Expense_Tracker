@@ -1,4 +1,5 @@
 """Shared helpers for every handler: who is this person, may they use the system, asking the agent, calling MCP tools."""
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -20,6 +21,7 @@ MAX_USER_MESSAGE_CHARS = 1000
 @asynccontextmanager
 async def keep_typing(bot, chat_id: int):
     """Telegram's 'typing…' fades after ~5s, so refresh it until the answer is ready."""
+
     async def loop():
         while True:
             try:
@@ -45,12 +47,20 @@ class BotBase:
     @staticmethod
     def private(tg: TgUser) -> Identity:
         """Writing to the bot in private means the bot can write back (the person pressed Start)."""
-        return Identity(telegram_id=tg.id, name=tg.full_name, username=tg.username, started=True)
+        return Identity(
+            telegram_id=tg.id, name=tg.full_name, username=tg.username, started=True
+        )
 
     @staticmethod
     def in_group(tg: TgUser, chat) -> Identity:
-        return Identity(telegram_id=tg.id, name=tg.full_name, username=tg.username, chat_type="group",
-                        group_chat_id=chat.id, group_title=chat.title)
+        return Identity(
+            telegram_id=tg.id,
+            name=tg.full_name,
+            username=tg.username,
+            chat_type="group",
+            group_chat_id=chat.id,
+            group_title=chat.title,
+        )
 
     @classmethod
     def ident_for(cls, tg: TgUser, chat) -> Identity:
@@ -68,9 +78,13 @@ class BotBase:
         tg = update.effective_user
         if await self.allowed(self.private(tg)):
             return True
-        target = update.effective_message or (update.callback_query and update.callback_query.message)
+        target = update.effective_message or (
+            update.callback_query and update.callback_query.message
+        )
         if target:
-            await target.reply_text("Sorry, this is a private bot. 🔒 Ask a friend who uses it to add you.")
+            await target.reply_text(
+                "Sorry, this is a private bot. 🔒 Ask a friend who uses it to add you."
+            )
         return False
 
     # ---- calling the server
@@ -92,14 +106,26 @@ class BotBase:
         except TelegramError:
             return None
 
-    async def _ask(self, tg: TgUser, chat, text: str, *, bot=None, from_button: bool = False) -> AgentReply:
+    async def _ask(
+        self, tg: TgUser, chat, text: str, *, bot=None, from_button: bool = False
+    ) -> AgentReply:
         ident = self.ident_for(tg, chat)
         in_group = ident.chat_type == "group"
         thread = f"tg-g{chat.id}-{tg.id}" if in_group else f"tg-{tg.id}"
-        count = await self.member_count(bot, chat) if (in_group and bot is not None) else None
+        count = (
+            await self.member_count(bot, chat)
+            if (in_group and bot is not None)
+            else None
+        )
         try:
             return await asyncio.wait_for(
-                self.runner.chat(identity=ident, thread_id=thread, text=text, from_button=from_button, member_count=count),
+                self.runner.chat(
+                    identity=ident,
+                    thread_id=thread,
+                    text=text,
+                    from_button=from_button,
+                    member_count=count,
+                ),
                 timeout=REPLY_TIMEOUT,
             )
         except asyncio.TimeoutError:
@@ -107,16 +133,24 @@ class BotBase:
             return AgentReply("⏱️ The AI took too long to answer. Please send it again.")
         except McpError:
             log.exception("expense service unavailable for telegram user %s", tg.id)
-            return AgentReply("🔌 I can't reach the expense service right now. Please try again in a moment.")
+            return AgentReply(
+                "🔌 I can't reach the expense service right now. Please try again in a moment."
+            )
         except Exception as e:
             if is_rate_limit(e):
                 log.warning("LLM rate limit hit for telegram user %s", tg.id)
-                return AgentReply("⏳ The AI is a bit busy right now (rate limit). Please try again in about a minute.")
+                return AgentReply(
+                    "⏳ The AI is a bit busy right now (rate limit). Please try again in about a minute."
+                )
             log.exception("agent failed for telegram user %s", tg.id)
-            return AgentReply("😵 Sorry, my brain hiccuped (AI or database error). Please try again in a moment.")
+            return AgentReply(
+                "😵 Sorry, my brain hiccuped (AI or database error). Please try again in a moment."
+            )
 
     @staticmethod
-    async def _send(message, reply: AgentReply, owner_telegram_id: int | None = None) -> None:
+    async def _send(
+        message, reply: AgentReply, owner_telegram_id: int | None = None
+    ) -> None:
         """Send an agent reply with the right buttons. In group chats, answer buttons are tied to the person who asked."""
         if reply.choices:
             markup = kb.choice_keyboard(reply.choices, owner_telegram_id)
