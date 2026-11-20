@@ -1,4 +1,5 @@
 """Stand-ins for Telegram objects, just enough for the handlers: they record what the bot says instead of sending it."""
+
 import itertools
 from types import SimpleNamespace
 
@@ -8,8 +9,16 @@ _mid = itertools.count(100)
 
 
 class FakeMessage:
-    def __init__(self, text="", chat=None, user=None, entities=None, reply_to=None, **extra):
-        self.text, self.chat, self.from_user, self.entities, self.reply_to_message = text, chat, user, entities or [], reply_to
+    def __init__(
+        self, text="", chat=None, user=None, entities=None, reply_to=None, **extra
+    ):
+        self.text, self.chat, self.from_user, self.entities, self.reply_to_message = (
+            text,
+            chat,
+            user,
+            entities or [],
+            reply_to,
+        )
         self.chat_id = chat.id if chat else None
         self.message_id = next(_mid)
         self.sent: list[dict] = []
@@ -17,7 +26,14 @@ class FakeMessage:
         self.__dict__.update(extra)
 
     async def reply_document(self, document=None, filename=None, caption=None, **kw):
-        self.sent.append({"text": caption or "", "document": document.read() if hasattr(document, "read") else document, "filename": filename, **kw})
+        self.sent.append(
+            {
+                "text": caption or "",
+                "document": document.read() if hasattr(document, "read") else document,
+                "filename": filename,
+                **kw,
+            }
+        )
 
     async def reply_text(self, text, reply_markup=None, **kw):
         m = FakeMessage(text, self.chat)
@@ -53,7 +69,9 @@ class FakeQuery:
 class FakeBot:
     """The Telegram Bot API: records sends/deletes; `blocked` ids raise Forbidden like a person who never pressed Start."""
 
-    def __init__(self, username="expense_test_bot", member_count=None, chat_members=None):
+    def __init__(
+        self, username="expense_test_bot", member_count=None, chat_members=None
+    ):
         self.username, self.id = username, 999
         self.sent: list[dict] = []
         self.deleted: list[tuple] = []
@@ -66,7 +84,15 @@ class FakeBot:
         if chat_id in self.blocked:
             raise Forbidden("bot can't initiate conversation with a user")
         mid = next(_mid)
-        self.sent.append({"chat_id": chat_id, "text": text, "markup": reply_markup, "message_id": mid, **kw})
+        self.sent.append(
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "markup": reply_markup,
+                "message_id": mid,
+                **kw,
+            }
+        )
         return SimpleNamespace(message_id=mid)
 
     async def delete_message(self, chat_id, message_id):
@@ -85,6 +111,7 @@ class FakeBot:
         status = self.chat_members.get((chat_id, user_id))
         if status is None:
             from telegram.error import BadRequest
+
             raise BadRequest("user not found")
         return SimpleNamespace(status=status)
 
@@ -105,11 +132,15 @@ def buttons(markup) -> list[tuple[str, str | None, str | None]]:
     """[(label, callback_data, url)] of an inline keyboard, flattened."""
     if markup is None:
         return []
-    return [(b.text, b.callback_data, b.url) for row in markup.inline_keyboard for b in row]
+    return [
+        (b.text, b.callback_data, b.url) for row in markup.inline_keyboard for b in row
+    ]
 
 
 def update(user=None, message=None, query=None, **extra):
-    return SimpleNamespace(effective_user=user, effective_message=message, callback_query=query, **extra)
+    return SimpleNamespace(
+        effective_user=user, effective_message=message, callback_query=query, **extra
+    )
 
 
 def context(bot, args=None):

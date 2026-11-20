@@ -1,4 +1,5 @@
 """Private chat: /start, commands and free text. Every answer comes from an MCP tool call."""
+
 from telegram import ReplyKeyboardRemove, Update
 from telegram.ext import ContextTypes
 
@@ -9,7 +10,9 @@ from app.util.periods import month_key
 
 class PrivateMixin(BotBase):
     async def _help_text(self, tg) -> str:
-        return (await self.call(self.private(tg), "respond_to_user", kind="help")).message
+        return (
+            await self.call(self.private(tg), "respond_to_user", kind="help")
+        ).message
 
     # ------------------------------------------------------------ /start (also handles invite and join links)
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -23,59 +26,100 @@ class PrivateMixin(BotBase):
         # opening a session as someone who pressed Start also makes the server queue anything that was waiting for them
         ident = self.private(tg)
         if param.startswith("join_") and param[5:].isdigit():
-            res = await self.call(ident, "join_group_via_start", group_id=int(param[5:]))
+            res = await self.call(
+                ident, "join_group_via_start", group_id=int(param[5:])
+            )
             await msg.reply_text(res.message)
         else:
             await self.gateway.session_token(ident, force=True)
-        await msg.reply_text(await self._help_text(tg), reply_markup=ReplyKeyboardRemove())  # also clears the old bottom menu
+        await msg.reply_text(
+            await self._help_text(tg), reply_markup=ReplyKeyboardRemove()
+        )  # also clears the old bottom menu
 
     async def _accept_invite(self, tg, msg, inviter_tg: str) -> bool:
         """Someone opened a friend's invite link: the server connects them both (each side uses the other's Telegram name)."""
         if not inviter_tg.isdigit():
             await msg.reply_text("That invite link isn't valid.")
             return False
-        res = await self.gateway.platform("platform_accept_invite", {
-            "person": {"telegram_id": tg.id, "name": tg.full_name, "username": tg.username}, "inviter_telegram_id": int(inviter_tg),
-        })
+        res = await self.gateway.platform(
+            "platform_accept_invite",
+            {
+                "person": {
+                    "telegram_id": tg.id,
+                    "name": tg.full_name,
+                    "username": tg.username,
+                },
+                "inviter_telegram_id": int(inviter_tg),
+            },
+        )
         await msg.reply_text(res.message.replace("❌ ", ""))
         return res.ok
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
-            await update.effective_message.reply_text(await self._help_text(update.effective_user), reply_markup=ReplyKeyboardRemove())
+            await update.effective_message.reply_text(
+                await self._help_text(update.effective_user),
+                reply_markup=ReplyKeyboardRemove(),
+            )
 
     # ------------------------------------------------------------ commands (no LLM, instant)
-    async def _direct(self, tg, message, action: str, args: list[str] | None = None) -> None:
+    async def _direct(
+        self, tg, message, action: str, args: list[str] | None = None
+    ) -> None:
         ident = self.private(tg)
         if action == "summary":
             res = await self.call(ident, "ui_view", view="summary", arg="this_month")
-            await message.reply_text(res.message, reply_markup=kb.summary_keyboard("this_month"))
+            await message.reply_text(
+                res.message, reply_markup=kb.summary_keyboard("this_month")
+            )
         elif action == "daily":
             res = await self.call(ident, "ui_view", view="daily", arg=month_key())
-            await message.reply_text(res.message, reply_markup=kb.daily_keyboard(month_key()))
+            await message.reply_text(
+                res.message, reply_markup=kb.daily_keyboard(month_key())
+            )
         elif action == "trend":
             res = await self.call(ident, "ui_view", view="trend", arg="6")
             await message.reply_text(res.message, reply_markup=kb.trend_keyboard(6))
         elif action == "undo":
             res = await self.call(ident, "last_expense")
             expense_id = res.data.get("expense_id")
-            await message.reply_text(res.message, reply_markup=kb.undo_confirm_keyboard(expense_id) if expense_id else None)
+            await message.reply_text(
+                res.message,
+                reply_markup=kb.undo_confirm_keyboard(expense_id)
+                if expense_id
+                else None,
+            )
         elif action == "dues":
             res = await self.call(ident, "ui_view", view="dues")
-            await message.reply_text(res.message, reply_markup=kb.dues_keyboard(res.data.get("dues")))
+            await message.reply_text(
+                res.message, reply_markup=kb.dues_keyboard(res.data.get("dues"))
+            )
         elif action in ("reimburse", "join", "claims", "policy", "workpdf"):
             await self._reimburse_command(tg, message, action, list(args or []))
         elif action in ("recent", "budgets", "friends", "invite"):
-            await message.reply_text((await self.call(ident, "ui_view", view=action)).message)
+            await message.reply_text(
+                (await self.call(ident, "ui_view", view=action)).message
+            )
 
-    async def on_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def on_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """/summary /history /budgets /friends /dues /daily /trend /invite /undo /reimburse /join /claims /policy"""
         if await self._guard(update):
-            action = update.effective_message.text.split()[0].lstrip("/").split("@")[0].lower()
+            action = (
+                update.effective_message.text.split()[0]
+                .lstrip("/")
+                .split("@")[0]
+                .lower()
+            )
             action = "recent" if action == "history" else action
-            await self._direct(update.effective_user, update.effective_message, action, context.args)
+            await self._direct(
+                update.effective_user, update.effective_message, action, context.args
+            )
 
-    async def on_kind_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def on_kind_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """/work <text> records a WORK expense (company pays back), /personal <text> a personal one. Free text still works as before."""
         if not await self._guard(update):
             return
@@ -83,18 +127,30 @@ class PrivateMixin(BotBase):
         action = msg.text.split()[0].lstrip("/").split("@")[0].lower()
         text = " ".join(context.args or []).strip()
         if not text:
-            if action == "work":  # no text: show the work screen (what is waiting, claim it, ask the policy)
+            if (
+                action == "work"
+            ):  # no text: show the work screen (what is waiting, claim it, ask the policy)
                 await self._reimburse_home(update.effective_user, msg)
             else:
-                await msg.reply_text("Say what you spent, for example:\n/personal lunch 250\n(Or just type “lunch 250”: that is personal too.)")
+                await msg.reply_text(
+                    "Say what you spent, for example:\n/personal lunch 250\n(Or just type “lunch 250”: that is personal too.)"
+                )
             return
         if len(text) > MAX_USER_MESSAGE_CHARS:
-            await msg.reply_text("✂️ That message is too long for me. Please keep it short.")
+            await msg.reply_text(
+                "✂️ That message is too long for me. Please keep it short."
+            )
             return
         # the prefix tells the assistant which kind it is, so it never has to guess
-        prefix = "WORK expense (the company pays it back; use add_work_expense)" if action == "work" else "PERSONAL expense (not for work; use add_expenses, never add_work_expense)"
+        prefix = (
+            "WORK expense (the company pays it back; use add_work_expense)"
+            if action == "work"
+            else "PERSONAL expense (not for work; use add_expenses, never add_work_expense)"
+        )
         async with keep_typing(context.bot, msg.chat_id):
-            reply = await self._ask(update.effective_user, msg.chat, f"{prefix}: {text}", bot=context.bot)
+            reply = await self._ask(
+                update.effective_user, msg.chat, f"{prefix}: {text}", bot=context.bot
+            )
         await self._send(msg, reply)
 
     # ------------------------------------------------------------ free text -> agent
@@ -103,8 +159,12 @@ class PrivateMixin(BotBase):
             return
         msg = update.effective_message
         if len(msg.text) > MAX_USER_MESSAGE_CHARS:
-            await msg.reply_text("✂️ That message is too long for me. Please keep it short, e.g. \"spent 200 on lunch\".")
+            await msg.reply_text(
+                '✂️ That message is too long for me. Please keep it short, e.g. "spent 200 on lunch".'
+            )
             return
         async with keep_typing(context.bot, msg.chat_id):
-            reply = await self._ask(update.effective_user, msg.chat, msg.text, bot=context.bot)
+            reply = await self._ask(
+                update.effective_user, msg.chat, msg.text, bot=context.bot
+            )
         await self._send(msg, reply)

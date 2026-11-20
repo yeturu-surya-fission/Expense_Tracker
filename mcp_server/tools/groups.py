@@ -8,8 +8,12 @@ from mcp_server.tools._common import Call, Opt, Out, ask_choice
 from mcp_server.tools.registry import tool
 from mcp_server.tools.splits import CANCELLED, EQUAL, SPECIFY, PersonAmount
 
-ALWAYS_EQUAL = Opt("always_equal", "Always equally in this group", ("always", "every", "default"))
-YES_SETTLE = Opt("yes", "Yes, settle up", ("yes", "ok", "sure", "confirm", "settle", "go"))
+ALWAYS_EQUAL = Opt(
+    "always_equal", "Always equally in this group", ("always", "every", "default")
+)
+YES_SETTLE = Opt(
+    "yes", "Yes, settle up", ("yes", "ok", "sure", "confirm", "settle", "go")
+)
 
 
 async def group_context(s, call: Call):
@@ -18,10 +22,14 @@ async def group_context(s, call: Call):
     there is no 'join' step. The chat comes from the access token, never from an argument.
     """
     if call.chat_type != "group" or call.group_chat_id is None:
-        raise GroupError("Group expenses are added inside the group chat. Open the group and mention me there.")
+        raise GroupError(
+            "Group expenses are added inside the group chat. Open the group and mention me there."
+        )
     group = await groups.group_for_chat(s, call.group_chat_id)
     if group is None:
-        raise GroupError("I'm not set up for this chat yet. Remove me from the group and add me again.")
+        raise GroupError(
+            "I'm not set up for this chat yet. Remove me from the group and add me again."
+        )
     await groups.join_group(s, group.id, call.user_id)
     return group
 
@@ -57,13 +65,30 @@ async def add_group_expense(
     async with session_scope() as s:
         group = await group_context(s, call)
         everyone = await groups.members(s, group.id)
-        chosen = [await groups.resolve_member(s, group, uid, n) for n in split_between] if split_between else everyone
-        payer = await groups.resolve_member(s, group, uid, paid_by) if paid_by else await friends.get_user(s, uid)
+        chosen = (
+            [await groups.resolve_member(s, group, uid, n) for n in split_between]
+            if split_between
+            else everyone
+        )
+        payer = (
+            await groups.resolve_member(s, group, uid, paid_by)
+            if paid_by
+            else await friends.get_user(s, uid)
+        )
         if split_between and include_me and uid not in {u.id for u in chosen}:
-            chosen = [await friends.get_user(s, uid), *chosen]  # "between me and Surya": the sender shares it too
+            chosen = [
+                await friends.get_user(s, uid),
+                *chosen,
+            ]  # "between me and Surya": the sender shares it too
         if split_between and payer.id not in {u.id for u in chosen}:
-            chosen = [payer, *chosen]  # whoever paid is part of the split unless they were left out on purpose
-        named = [(await groups.resolve_member(s, group, uid, p.name), Decimal(str(p.amount))) for p in (exact_amounts or [])]
+            chosen = [
+                payer,
+                *chosen,
+            ]  # whoever paid is part of the split unless they were left out on purpose
+        named = [
+            (await groups.resolve_member(s, group, uid, p.name), Decimal(str(p.amount)))
+            for p in (exact_amounts or [])
+        ]
         group_id, default_split, group_name = group.id, group.default_split, group.name
     if split == "exact" and named:
         chosen = [u for u, _ in named]
@@ -77,7 +102,9 @@ async def add_group_expense(
             mode = "equal"
         else:
             pick = ask_choice(
-                call, "split_mode", f"How should I split {money(amount)} between {len(chosen)} people in {group_name}?",
+                call,
+                "split_mode",
+                f"How should I split {money(amount)} between {len(chosen)} people in {group_name}?",
                 [EQUAL, ALWAYS_EQUAL, SPECIFY],
             )
             if pick is None:
@@ -96,22 +123,40 @@ async def add_group_expense(
         ids = [u.id for u in chosen]
         if payer.id in ids:  # the payer is listed first (they also get any odd paisa)
             ids = [payer.id] + [i for i in ids if i != payer.id]
-        so_far = (await groups.summary(s, group_id)).share  # spread odd paise fairly across the trip's expenses
-        shares = splits.equal_shares(total, ids, already=so_far) if mode == "equal" else splits.exact_shares(total, {u.id: a for u, a in named})
+        so_far = (
+            await groups.summary(s, group_id)
+        ).share  # spread odd paise fairly across the trip's expenses
+        shares = (
+            splits.equal_shares(total, ids, already=so_far)
+            if mode == "equal"
+            else splits.exact_shares(total, {u.id: a for u, a in named})
+        )
         res = await splits.create_split(
-            s, creator_id=uid, payer_id=payer.id, shares=shares, total=total, description=description,
-            category=category, mode=mode, group_id=group_id,
+            s,
+            creator_id=uid,
+            payer_id=payer.id,
+            shares=shares,
+            total=total,
+            description=description,
+            category=category,
+            mode=mode,
+            group_id=group_id,
         )
         names = {u.id: friends.display(u) for u in chosen}
         payer_name = friends.display(payer)
         split_id = res.shared.id
-    lines = [f"{cat_icon(category)} {payer_name} paid {money(amount)} for {description} · #{split_id}"]
+    lines = [
+        f"{cat_icon(category)} {payer_name} paid {money(amount)} for {description} · #{split_id}"
+    ]
     if mode == "equal":
         each = next(iter(shares.values()))
         who = ", ".join(names.get(u, "?") for u in shares)
         lines.append(f"Split equally among {len(shares)} ({money(each)} each): {who}.")
     else:
-        lines.append("Split: " + ", ".join(f"{names.get(u, '?')} {money(a)}" for u, a in shares.items()))
+        lines.append(
+            "Split: "
+            + ", ".join(f"{names.get(u, '?')} {money(a)}" for u, a in shares.items())
+        )
     return Out("\n".join(lines), {"split_ids": [split_id]})
 
 
@@ -144,4 +189,6 @@ async def settle_group(call) -> Out | str:
     if pick is None:
         return "👍 Okay, not settling yet."
     text, unreachable = await group_flow.settle_and_notify(group_id, call.member_count)
-    return Out(text, {"start_users": group_flow.people_data(unreachable), "group_id": group_id})
+    return Out(
+        text, {"start_users": group_flow.people_data(unreachable), "group_id": group_id}
+    )

@@ -3,6 +3,7 @@
 Illustrative sketch. Approval can take days, so the decision is stored and retried until the receiver accepts it,
 and the receiver ignores repeats (idempotent).
 """
+
 import hashlib
 import hmac
 

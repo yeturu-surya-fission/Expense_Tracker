@@ -1,11 +1,17 @@
 """Ready-to-send text for read-only requests. Used by the LLM tools AND by the bot's no-LLM buttons."""
+
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mcp_server.domain import budgets, debts, friends, groups, reports
 from mcp_server.domain.formatting import bar, cat_icon, history_line, money, status_dot
-from mcp_server.domain.periods import month_key, month_label, month_period, resolve_period
+from mcp_server.domain.periods import (
+    month_key,
+    month_label,
+    month_period,
+    resolve_period,
+)
 
 
 async def budgets_text(s: AsyncSession, user_id: int, month: str | None = None) -> str:
@@ -16,7 +22,11 @@ async def budgets_text(s: AsyncSession, user_id: int, month: str | None = None) 
         return "🎯 No budgets yet.\n\nTry saying: set a limit of 3k for food"
     lines = [f"🎯 Budgets · {period.label if period else 'this month'}\n"]
     for r in rows:
-        left = f"{money(r.remaining)} left" if r.remaining >= 0 else f"over by {money(-r.remaining)}"
+        left = (
+            f"{money(r.remaining)} left"
+            if r.remaining >= 0
+            else f"over by {money(-r.remaining)}"
+        )
         lines.append(
             f"{status_dot(r.percent)} {cat_icon(r.category)} {r.category}\n"
             f"   {bar(r.percent)} {r.percent}%\n"
@@ -25,14 +35,25 @@ async def budgets_text(s: AsyncSession, user_id: int, month: str | None = None) 
     return "\n".join(lines)
 
 
-async def recent_text(s: AsyncSession, user_id: int, *, period: str = "all_time", limit: int = 10, category: str | None = None) -> str:
-    rows = await reports.list_expenses(s, user_id, period=resolve_period(period), limit=limit, category=category)
+async def recent_text(
+    s: AsyncSession,
+    user_id: int,
+    *,
+    period: str = "all_time",
+    limit: int = 10,
+    category: str | None = None,
+) -> str:
+    rows = await reports.list_expenses(
+        s, user_id, period=resolve_period(period), limit=limit, category=category
+    )
     if not rows:
         return "🧾 No expenses found."
     return "🧾 Recent expenses\n\n" + "\n".join(history_line(e) for e in rows)
 
 
-async def summary_text(s: AsyncSession, user_id: int, period: str = "this_month") -> str:
+async def summary_text(
+    s: AsyncSession, user_id: int, period: str = "this_month"
+) -> str:
     p = resolve_period(period)
     data = await reports.summary(s, user_id, p)
     lines = [f"📊 Summary · {p.label}\n", f"🔴 Spent   {money(data['total_spent'])}"]
@@ -45,23 +66,35 @@ async def summary_text(s: AsyncSession, user_id: int, period: str = "this_month"
     return "\n".join(lines)
 
 
-async def trend_text(s: AsyncSession, user_id: int, months: int = 6, category: str | None = None) -> str:
+async def trend_text(
+    s: AsyncSession, user_id: int, months: int = 6, category: str | None = None
+) -> str:
     data = await reports.monthly_trend(s, user_id, months=months, category=category)
     keys, spent = data["months"], data["spent"]
-    title = f"📈 {category.strip().lower()} · last {len(keys)} months" if category else f"📈 Last {len(keys)} months"
+    title = (
+        f"📈 {category.strip().lower()} · last {len(keys)} months"
+        if category
+        else f"📈 Last {len(keys)} months"
+    )
     if not any(spent.values()):
         return f"{title}\n\nNo expenses in this range yet."
     top = max(spent.values()) or Decimal(1)
     lines = [title, ""]
     for k in keys:
-        lines.append(f"{month_label(k)}  {bar(int(spent[k] * 100 / top), 8)} 🔴 {money(spent[k])}")
+        lines.append(
+            f"{month_label(k)}  {bar(int(spent[k] * 100 / top), 8)} 🔴 {money(spent[k])}"
+        )
     total = sum(spent.values(), Decimal(0))
     lines += ["", f"Total spent {money(total)} · avg {money(total / len(keys))}/month"]
     if not category and data["by_category"]:
         lines += ["", "By category"]
-        ranked = sorted(data["by_category"].items(), key=lambda kv: -sum(kv[1].values()))[:5]
+        ranked = sorted(
+            data["by_category"].items(), key=lambda kv: -sum(kv[1].values())
+        )[:5]
         for cat, per_month in ranked:
-            cells = " · ".join(f"{month_label(k)[:3]} {money(per_month[k])}" for k in keys[-4:])
+            cells = " · ".join(
+                f"{month_label(k)[:3]} {money(per_month[k])}" for k in keys[-4:]
+            )
             lines.append(f"{cat_icon(cat)} {cat}: {cells}")
     return "\n".join(lines)
 
@@ -75,10 +108,16 @@ async def daily_text(s: AsyncSession, user_id: int, month: str | None = None) ->
     total = sum((t for _, t, _, _ in data["days"]), Decimal(0))
     lines = [f"📅 Daily spending · {data['label']}", ""]
     for day, amount, n, cat in data["days"]:
-        lines.append(f"{day:%d %a}  {bar(int(amount * 100 / peak), 8)} {money(amount)}  {cat_icon(cat)} {cat}" + (f" +{n - 1}" if n > 1 else ""))
+        lines.append(
+            f"{day:%d %a}  {bar(int(amount * 100 / peak), 8)} {money(amount)}  {cat_icon(cat)} {cat}"
+            + (f" +{n - 1}" if n > 1 else "")
+        )
     best = max(data["days"], key=lambda r: r[1])
-    lines += ["", f"🔴 Total {money(total)} over {len(data['days'])} days · avg {money(total / len(data['days']))}/day",
-              f"🔝 Biggest day: {best[0]:%d %b} ({money(best[1])})"]
+    lines += [
+        "",
+        f"🔴 Total {money(total)} over {len(data['days'])} days · avg {money(total / len(data['days']))}/day",
+        f"🔝 Biggest day: {best[0]:%d %b} ({money(best[1])})",
+    ]
     return "\n".join(lines)
 
 
@@ -89,7 +128,11 @@ async def friends_text(s: AsyncSession, user_id: int) -> str:
         return "👥 No friends yet.\n\nSay: add friend Surya 123456789\nor send them your invite link (/invite)."
     lines = ["👥 Your friends\n"]
     for f, u in rows:
-        status = "✓ can receive messages" if u.started_at else "⏳ hasn't started the bot yet"
+        status = (
+            "✓ can receive messages"
+            if u.started_at
+            else "⏳ hasn't started the bot yet"
+        )
         lines.append(f"• {f.nickname}  ·  id {u.telegram_id}  ·  {status}")
     return "\n".join(lines)
 
@@ -101,11 +144,17 @@ async def dues_text(s: AsyncSession, user_id: int) -> str:
     lines = ["💳 Pending payments"]
     if owe:
         lines += ["", "You owe:"]
-        lines += await _per_person(s, user_id, owe, "creditor_id", "marked paid, waiting for them to confirm")
-        lines.append("\nPaid only part? Say e.g. \"I paid Surya 300\" and the rest stays due.")
+        lines += await _per_person(
+            s, user_id, owe, "creditor_id", "marked paid, waiting for them to confirm"
+        )
+        lines.append(
+            '\nPaid only part? Say e.g. "I paid Surya 300" and the rest stays due.'
+        )
     if owed:
         lines += ["", "Owed to you:"]
-        lines += await _per_person(s, user_id, owed, "debtor_id", "says they paid: please confirm")
+        lines += await _per_person(
+            s, user_id, owed, "debtor_id", "says they paid: please confirm"
+        )
     return "\n".join(lines)
 
 
@@ -121,12 +170,23 @@ async def dues_data(s: AsyncSession, user_id: int) -> dict:
             if d.status == "claimed":
                 t[1] += d.amount
         for other_id, (total, claimed) in totals.items():
-            name = await friends.nickname_of(s, user_id, await friends.get_user(s, other_id))
-            out[key].append({"person_id": other_id, "name": name, "total": str(total), "claimed": str(claimed)})
+            name = await friends.nickname_of(
+                s, user_id, await friends.get_user(s, other_id)
+            )
+            out[key].append(
+                {
+                    "person_id": other_id,
+                    "name": name,
+                    "total": str(total),
+                    "claimed": str(claimed),
+                }
+            )
     return out
 
 
-async def _per_person(s: AsyncSession, user_id: int, rows, other_field: str, claimed_note: str) -> list[str]:
+async def _per_person(
+    s: AsyncSession, user_id: int, rows, other_field: str, claimed_note: str
+) -> list[str]:
     """One line per person with the TOTAL, instead of one line per bill."""
     totals: dict[int, list] = {}
     for d in rows:
@@ -151,34 +211,59 @@ async def group_text(s: AsyncSession, group_id: int) -> str:
     names = ", ".join(friends.display(u) for u in sm.people)
     lines = [f"🧳 {sm.group.name}", f"Members: {names}"]
     if not sm.expenses:
-        lines += ["", "No open expenses yet. Add one: @" + (settings_username() or "bot") + " paid 1000 for petrol"]
+        lines += [
+            "",
+            "No open expenses yet. Add one: @"
+            + (settings_username() or "bot")
+            + " paid 1000 for petrol",
+        ]
         return "\n".join(lines)
-    lines += ["", f"Spent so far: {money(sm.total)} in {len(sm.expenses)} expense(s)", ""]
+    lines += [
+        "",
+        f"Spent so far: {money(sm.total)} in {len(sm.expenses)} expense(s)",
+        "",
+    ]
     net = sm.net()
     by_id = {u.id: u for u in sm.people}
-    for uid in sorted(net, key=lambda i: friends.display(by_id[i]) if i in by_id else ""):
+    for uid in sorted(
+        net, key=lambda i: friends.display(by_id[i]) if i in by_id else ""
+    ):
         if uid not in by_id:
             continue
         n = net[uid]
-        verdict = "even" if n == 0 else (f"gets back {money(n)}" if n > 0 else f"owes {money(-n)}")
-        lines.append(f"• {friends.display(by_id[uid])}: paid {money(sm.paid.get(uid, 0))} · share {money(sm.share.get(uid, 0))} → {verdict}")
+        verdict = (
+            "even"
+            if n == 0
+            else (f"gets back {money(n)}" if n > 0 else f"owes {money(-n)}")
+        )
+        lines.append(
+            f"• {friends.display(by_id[uid])}: paid {money(sm.paid.get(uid, 0))} · share {money(sm.share.get(uid, 0))} → {verdict}"
+        )
     lines += ["", "Latest:"]
     for e, payer in sm.expenses[-5:]:
-        lines.append(f"  #{e.id} {friends.display(payer)} paid {money(e.amount)} · {e.description}")
+        lines.append(
+            f"  #{e.id} {friends.display(payer)} paid {money(e.amount)} · {e.description}"
+        )
     lines.append("\nWhen you're done: settle the group to send everyone their bill.")
     return "\n".join(lines)
 
 
 def settings_username() -> str:
     from mcp_server.config import settings
+
     return settings.bot_username
 
 
-def person_breakdown(shares: list[tuple[str, Decimal]], paid: list[tuple[str, Decimal]]) -> str:
+def person_breakdown(
+    shares: list[tuple[str, Decimal]], paid: list[tuple[str, Decimal]]
+) -> str:
     """'share ₹70: coffee ₹20, tiffins ₹30 · paid ₹60: coffee ₹60'  - the totals AND the bills behind them, to check the maths."""
+
     def part(label: str, rows: list[tuple[str, Decimal]]) -> str:
         total = sum((amt for _, amt in rows), Decimal(0))
-        return f"{label} {money(total)}: " + ", ".join(f"{desc} {money(amt)}" for desc, amt in rows)
+        return f"{label} {money(total)}: " + ", ".join(
+            f"{desc} {money(amt)}" for desc, amt in rows
+        )
 
     parts = [part("share", shares)] if shares else []
     if paid:
@@ -206,6 +291,7 @@ def settlement_text(
         • K Gopal owes ₹10
            (share ₹70: coffee ₹20, tiffins ₹30, cooldrinks ₹20 · paid ₹60: coffee ₹60)
     """
+
     def verb(name: str, net: Decimal) -> str:
         you = name == "You"
         if net < 0:
@@ -220,7 +306,9 @@ def settlement_text(
     else:
         lines.append("• Nobody needs to pay anyone")
     lines += ["", "📋 Each person  (owes = share − paid)"]
-    order = sorted(nets, key=lambda u: (nets[u] >= 0, nets[u]))  # people who owe first, biggest debt first
+    order = sorted(
+        nets, key=lambda u: (nets[u] >= 0, nets[u])
+    )  # people who owe first, biggest debt first
     for uid in order:
         detail = person_breakdown(shares.get(uid, []), paid.get(uid, []))
         lines.append(f"• {verb(names[uid], nets[uid])}")

@@ -1,4 +1,5 @@
 """Bank statement PDFs (private chat only): upload -> preview -> confirm -> expenses added. The server holds the rules."""
+
 import asyncio
 import base64
 import logging
@@ -18,28 +19,45 @@ STATEMENT_TIMEOUT = 180
 
 
 class StatementMixin(BotBase):
-    async def on_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def on_document(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         if not await self._guard(update):
             return
         msg, doc = update.effective_message, update.effective_message.document
-        is_pdf = doc.mime_type == "application/pdf" or (doc.file_name or "").lower().endswith(".pdf")
+        is_pdf = doc.mime_type == "application/pdf" or (
+            doc.file_name or ""
+        ).lower().endswith(".pdf")
         kind = "application/pdf" if is_pdf else (doc.mime_type or "")
-        if (is_pdf or kind.startswith("image/")) and await self._try_receipt(update, doc, doc.file_name or "receipt", kind, if_waiting=True):
+        if (is_pdf or kind.startswith("image/")) and await self._try_receipt(
+            update, doc, doc.file_name or "receipt", kind, if_waiting=True
+        ):
             return  # a work expense was waiting for its receipt: this file is it, not a bank statement
         if not is_pdf:
-            await msg.reply_text("📄 I can only read PDF bank statements. Please send a PDF.")
+            await msg.reply_text(
+                "📄 I can only read PDF bank statements. Please send a PDF."
+            )
             return
         if doc.file_size and doc.file_size > MAX_PDF_BYTES:
-            await msg.reply_text("📄 That PDF is bigger than 10 MB. Please send a smaller one.")
+            await msg.reply_text(
+                "📄 That PDF is bigger than 10 MB. Please send a smaller one."
+            )
             return
 
         pw = re.search(r"(?i)pass(?:word)?\s*[:=]?\s*(\S+)", msg.caption or "")
-        status = await msg.reply_text("📄 Got your statement - reading it. This can take up to a minute…")
+        status = await msg.reply_text(
+            "📄 Got your statement - reading it. This can take up to a minute…"
+        )
         ident = self.private(update.effective_user)
         try:
             async with keep_typing(context.bot, msg.chat_id):
                 data = bytes(await (await doc.get_file()).download_as_bytearray())
-                read = await self.call(ident, "statement_read_pdf", pdf_base64=base64.b64encode(data).decode(), password=pw.group(1) if pw else None)
+                read = await self.call(
+                    ident,
+                    "statement_read_pdf",
+                    pdf_base64=base64.b64encode(data).decode(),
+                    password=pw.group(1) if pw else None,
+                )
                 if not read.ok:
                     await status.edit_text(read.message)
                     return
@@ -48,32 +66,54 @@ class StatementMixin(BotBase):
                     return
                 rows = await asyncio.wait_for(
                     statement_parser.parse_pages(
-                        self.llm, read.data["pages"], categories=read.data["categories"], today=read.data["today"],
+                        self.llm,
+                        read.data["pages"],
+                        categories=read.data["categories"],
+                        today=read.data["today"],
                         user_categories=read.data.get("budget_categories"),
                     ),
                     STATEMENT_TIMEOUT,
                 )
-                prev = await self.call(ident, "statement_preview", filename=doc.file_name, rows=rows)
+                prev = await self.call(
+                    ident, "statement_preview", filename=doc.file_name, rows=rows
+                )
             if not prev.ok:
                 await status.edit_text(prev.message)
                 return
-            await status.edit_text(prev.text, reply_markup=kb.import_keyboard(prev.data["import_id"], prev.data["new"], prev.data["maybe"]))
+            await status.edit_text(
+                prev.text,
+                reply_markup=kb.import_keyboard(
+                    prev.data["import_id"], prev.data["new"], prev.data["maybe"]
+                ),
+            )
         except statement_parser.StatementError as e:
             await status.edit_text(f"❌ {e}")
         except asyncio.TimeoutError:
-            await status.edit_text("⏱️ Reading the statement took too long. Please try again, or send a shorter period.")
+            await status.edit_text(
+                "⏱️ Reading the statement took too long. Please try again, or send a shorter period."
+            )
         except Exception:
-            log.exception("statement import failed for telegram user %s", update.effective_user.id)
-            await status.edit_text("😵 Sorry, I couldn't process that statement. Please try again.")
+            log.exception(
+                "statement import failed for telegram user %s", update.effective_user.id
+            )
+            await status.edit_text(
+                "😵 Sorry, I couldn't process that statement. Please try again."
+            )
 
-    async def on_other_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def on_other_file(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """A photo: the receipt of the work expense that is waiting for one."""
         if not await self._guard(update):
             return
         photos = update.effective_message.photo
-        if photos and await self._try_receipt(update, photos[-1], "receipt.jpg", "image/jpeg", if_waiting=True):
+        if photos and await self._try_receipt(
+            update, photos[-1], "receipt.jpg", "image/jpeg", if_waiting=True
+        ):
             return
-        await update.effective_message.reply_text("📷 I got your photo, but none of your work expenses is waiting for a receipt. Add the expense first, e.g. “work expense: flight 3000”. (I can only read PDF bank statements otherwise.)")
+        await update.effective_message.reply_text(
+            "📷 I got your photo, but none of your work expenses is waiting for a receipt. Add the expense first, e.g. “work expense: flight 3000”. (I can only read PDF bank statements otherwise.)"
+        )
 
     async def _import_action(self, q, tg: TgUser, arg: str) -> None:
         raw_id, _, mode = arg.partition(":")
@@ -82,11 +122,17 @@ class StatementMixin(BotBase):
             res = await self.call(ident, "statement_cancel", import_id=import_id)
             await q.edit_message_text(res.message.replace("❌ ", "ℹ️ ", 1))
             return
-        res = await self.gateway.call(ident, "statement_apply", {"import_id": import_id, "include_maybes": mode == "all"})
+        res = await self.gateway.call(
+            ident,
+            "statement_apply",
+            {"import_id": import_id, "include_maybes": mode == "all"},
+        )
         if not res.ok:
             await q.edit_message_text(res.message.replace("❌ ", "ℹ️ ", 1))
             return
-        await q.edit_message_text(res.text, reply_markup=kb.after_import_keyboard(import_id))
+        await q.edit_message_text(
+            res.text, reply_markup=kb.after_import_keyboard(import_id)
+        )
 
     async def _import_undo(self, q, tg: TgUser, import_id: int) -> None:
         res = await self.call(self.private(tg), "statement_undo", import_id=import_id)

@@ -1,0 +1,5 @@
+uv.lock
+.venv/
+assets/
+docs/diagrams/
+*.py

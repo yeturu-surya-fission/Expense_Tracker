@@ -1,4 +1,5 @@
 """The MCP SDK calls this for EVERY request: there is no session to remember, so a token is checked every time."""
+
 from mcp.server.auth.provider import AccessToken
 
 from mcp_server.auth import tokens

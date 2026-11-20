@@ -1,4 +1,5 @@
 """The few types the bot shares with the MCP client layer."""
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -6,6 +7,7 @@ from typing import Any
 @dataclass(frozen=True)
 class Identity:
     """Who the bot is acting for, and where. The MCP server turns this into a session token (the bot never forges one)."""
+
     telegram_id: int
     name: str | None = None
     username: str | None = None
@@ -22,6 +24,7 @@ class Identity:
 @dataclass
 class ToolResult:
     """What every MCP tool returns (see mcp_server/tools/registry.py)."""
+
     status: str  # ok | input_required | rejected | error
     text: str = ""
     data: dict[str, Any] = field(default_factory=dict)

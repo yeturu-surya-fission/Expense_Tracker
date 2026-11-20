@@ -18,7 +18,9 @@ from app.config import settings
 from app.mcp_client.gateway import McpGateway
 from app.mcp_client.types import McpError
 
-logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
 logging.getLogger("httpx").setLevel(logging.WARNING)  # its URLs contain the bot token
 logging.getLogger("httpx2").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -34,14 +36,19 @@ async def load_tools(gateway: McpGateway, attempts: int = 30) -> list[dict]:
         except McpError as e:
             log.warning("waiting for the MCP server (%s/%s): %s", i, attempts, e)
             await asyncio.sleep(2)
-    raise RuntimeError(f"The MCP server at {settings.mcp_server_url} is not reachable. Is it running, and are MCP_BOT_CLIENT_* set?")
+    raise RuntimeError(
+        f"The MCP server at {settings.mcp_server_url} is not reachable. Is it running, and are MCP_BOT_CLIENT_* set?"
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     llm = get_llm()  # fail fast on a bad/missing key
     gateway = McpGateway(
-        settings.mcp_server_url, settings.auth_base_url, settings.mcp_bot_client_id, settings.mcp_bot_client_secret,
+        settings.mcp_server_url,
+        settings.auth_base_url,
+        settings.mcp_bot_client_id,
+        settings.mcp_bot_client_secret,
         timeout=settings.mcp_timeout_seconds,
     )
     tool_defs = await load_tools(gateway)
@@ -49,7 +56,9 @@ async def lifespan(app: FastAPI):
 
     # LangGraph state (conversations + paused human-in-the-loop questions) lives in the bot's own Postgres
     pool = AsyncConnectionPool(
-        settings.checkpointer_url, max_size=10, open=False,
+        settings.checkpointer_url,
+        max_size=10,
+        open=False,
         kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
     )
     await pool.open()
@@ -61,12 +70,20 @@ async def lifespan(app: FastAPI):
     await tg.initialize()
     await tg.start()
     await tg.bot.set_my_commands(COMMANDS)  # the '/' menu in Telegram
-    await tg.bot.set_my_commands(GROUP_COMMANDS, scope=BotCommandScopeAllGroupChats())  # and inside groups
-    settings.bot_username = tg.bot.username or ""  # the server builds invite / start links from it
-    deliverer = asyncio.create_task(delivery_loop(OutboxDeliverer(tg.bot, gateway)))  # messages the server queued for people
+    await tg.bot.set_my_commands(
+        GROUP_COMMANDS, scope=BotCommandScopeAllGroupChats()
+    )  # and inside groups
+    settings.bot_username = (
+        tg.bot.username or ""
+    )  # the server builds invite / start links from it
+    deliverer = asyncio.create_task(
+        delivery_loop(OutboxDeliverer(tg.bot, gateway))
+    )  # messages the server queued for people
     if settings.telegram_mode == "polling":
         await tg.bot.delete_webhook()
-        await tg.updater.start_polling(allowed_updates=["message", "callback_query", "my_chat_member"])
+        await tg.updater.start_polling(
+            allowed_updates=["message", "callback_query", "my_chat_member"]
+        )
         log.info("Telegram: long polling")
     else:
         await tg.bot.set_webhook(

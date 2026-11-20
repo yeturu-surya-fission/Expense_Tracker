@@ -1,6 +1,6 @@
 # Letting Two AI Agents Talk Money: Work Reimbursements Over A2A, MCP and Telegram
 
-*Fission Labs · Engineering · by the Python intern team*
+_Fission Labs · Engineering · by the Python intern team_
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"fontFamily":"Segoe UI, Helvetica, Arial","fontSize":"16px","primaryColor":"#f1f5f9","primaryBorderColor":"#475569","lineColor":"#334155"}}}%%

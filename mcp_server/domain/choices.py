@@ -1,11 +1,23 @@
 """Understanding a person's answer to a question the bot asked (a tapped button or typed words)."""
+
 import re
 
-CANCEL_WORDS = {"cancel", "skip", "nevermind", "stop", "no", "ignore", "forget", "abort"}
+CANCEL_WORDS = {
+    "cancel",
+    "skip",
+    "nevermind",
+    "stop",
+    "no",
+    "ignore",
+    "forget",
+    "abort",
+}
 
 
 def is_cancel(text: str | None) -> bool:
-    words = set(re.findall(r"[a-z]+", (text or "").lower().replace("never mind", "nevermind")))
+    words = set(
+        re.findall(r"[a-z]+", (text or "").lower().replace("never mind", "nevermind"))
+    )
     return bool(words & CANCEL_WORDS)
 
 

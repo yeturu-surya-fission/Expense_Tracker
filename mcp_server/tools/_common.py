@@ -7,6 +7,7 @@ anything*. The server turns that into an `input_required` result (question + opt
 the SAME tool again with the same arguments plus `answers={key: chosen option}`. Nothing is committed until every
 question has an answer, and a second call with the same answers does the work exactly once (idempotency key).
 """
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,6 +17,7 @@ from mcp_server.domain.choices import is_cancel
 @dataclass(frozen=True)
 class Opt:
     """One answer the human can pick (a button; `words` let a typed reply like 'equally' work too)."""
+
     id: str
     label: str
     words: tuple[str, ...] = ()
@@ -24,19 +26,23 @@ class Opt:
 @dataclass
 class Call:
     """The verified identity and context of one tool call. Built from the access token, never from tool arguments."""
+
     user_id: int
     subject: str  # 'user:12'
     actor: str | None  # the client acting for the user ('telegram-bot')
     chat_type: str = "private"  # private | group
     group_chat_id: int | None = None
     answers: dict[str, str] = field(default_factory=dict)
-    member_count: int | None = None  # advisory, reported by the client (how many people Telegram says are in the group)
+    member_count: int | None = (
+        None  # advisory, reported by the client (how many people Telegram says are in the group)
+    )
     tool: str = ""
 
 
 @dataclass
 class Out:
     """A successful result: text for the human plus structured data for the client (ids for Undo buttons, people to tag...)."""
+
     text: str
     data: dict[str, Any] = field(default_factory=dict)
 
@@ -53,7 +59,10 @@ class NeedInput(Exception):
             "key": self.key,
             "type": "choice",
             "question": self.question,
-            "options": [{"id": o.id, "label": o.label, "words": list(o.words)} for o in self.options],
+            "options": [
+                {"id": o.id, "label": o.label, "words": list(o.words)}
+                for o in self.options
+            ],
         }
 
 

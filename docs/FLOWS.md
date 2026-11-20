@@ -77,7 +77,7 @@ sequenceDiagram
 
 ## 3. Splitting a bill with friends
 
-"went to dining, paid 3k, split with Surya" — if you didn't say *how*, the bot asks.
+"went to dining, paid 3k, split with Surya" — if you didn't say _how_, the bot asks.
 
 ```mermaid
 sequenceDiagram
@@ -110,16 +110,16 @@ sequenceDiagram
     O->>M: acknowledge (message id)
 ```
 
-The key point: **a question is a result, not a half-finished action.** The server asks *before* it writes anything, so while the human is thinking
+The key point: **a question is a result, not a half-finished action.** The server asks _before_ it writes anything, so while the human is thinking
 nothing exists; their answer arrives as a second call of the same tool, and the write happens exactly once (repeat calls carry the same
 idempotency key and return the first result).
 
 **Splitting something you just logged.** "I paid 500 for petrol", then "split it with Surya": `split_expense` voids the plain expense
 (same amount, the user is the payer, it is their latest personal expense, logged within the last hour) and saves only the user's own
-share, so the petrol is not counted twice. The reply says so (*♻️ ... is replaced by this split*).
+share, so the petrol is not counted twice. The reply says so (_♻️ ... is replaced by this split_).
 
-Other questions the bot may ask: *one-off or create a group?* (4 or more people), *equally, always equally in this group, or amounts?* (group
-expenses), *settle up now?* (before settling a group). A typed answer works too ("equally"), and an unrelated reply simply cancels the
+Other questions the bot may ask: _one-off or create a group?_ (4 or more people), _equally, always equally in this group, or amounts?_ (group
+expenses), _settle up now?_ (before settling a group). A typed answer works too ("equally"), and an unrelated reply simply cancels the
 question and handles your new message.
 
 ## 4. The payment lifecycle ("I paid" → "Received")
@@ -158,7 +158,7 @@ flowchart TD
 - **Only unpaid (`pending`) debts are netted.** A debt already marked paid is in flight and is left alone.
 - **Pay everything to one person:** the **✅ I paid Surya ₹350** button (`settle_with`, action `pay`) marks all their bills paid, saves the
   shares as the payer's expenses and sends Surya **one** message with **Received / Not yet** for the total.
-- **Pay part of it:** *"I paid Surya 300"* is the `pay_friend` tool. It takes exactly that amount off, oldest bill first. A bill bigger than
+- **Pay part of it:** _"I paid Surya 300"_ is the `pay_friend` tool. It takes exactly that amount off, oldest bill first. A bill bigger than
   what is left is **cut in two**: the paid part (a new `debt` row, status `claimed`) waits for Surya, the remainder stays `pending`.
   Paying more than is owed is refused. The reply shows what is still to pay.
 - **Confirm:** Surya taps **Received** (all the `claimed` bills from that person become `settled`) or **Not yet** (only the claimed
@@ -167,7 +167,7 @@ flowchart TD
 
 ## 5. Several bills, different payers (a party night)
 
-*"I paid 2500 for food, Surya paid 600 for ice cream, Komal paid 3500 for the bar. Who pays whom?"*
+_"I paid 2500 for food, Surya paid 600 for ice cream, Komal paid 3500 for the bar. Who pays whom?"_
 One `split_bills` call nets everything instead of creating one debt per bill.
 
 ```mermaid
@@ -181,7 +181,7 @@ flowchart TD
     NET --> OWE0["people who owe nothing:<br/>their share is saved to their expenses now"]
 ```
 
-The reply looks like this (every number can be checked: *owes = share − paid*):
+The reply looks like this (every number can be checked: _owes = share − paid_):
 
 ```
 💸 Who pays whom
@@ -218,8 +218,8 @@ flowchart TD
 ```
 
 **Why members are learned instead of listed:** a bot cannot list a group's members, so people who never speak and aren't the owner's friends
-can't be seen. Before a split the bot compares what it knows with Telegram's member count and warns: *"I only know 3 of the 5 people, the
-others should mention me once."*
+can't be seen. Before a split the bot compares what it knows with Telegram's member count and warns: _"I only know 3 of the 5 people, the
+others should mention me once."_
 
 **Access:** everyone in the group can use the bot there, by **@mentioning it** (or replying to it, or `/summary`, `/people`, `/settle`). Ordinary chatter is
 never read or answered. Group members can also use the bot privately (for their own bills), but cannot add it to other groups.
@@ -256,17 +256,17 @@ sequenceDiagram
     B-->>K: her bill arrives immediately (with the items)
 ```
 
-- If the split isn't stated for an expense the bot asks (*equally / always equally / amounts*); "always equally" stops the question for this group.
+- If the split isn't stated for an expense the bot asks (_equally / always equally / amounts_); "always equally" stops the question for this group.
 - "Surya paid 600" is credited to **Surya**, not to whoever typed it.
 - People who owe nothing are told what they're owed, and everyone's share is saved to their own expenses (immediately, or when they pay).
 
 Example with real numbers (coffee 60 by Gopal, tiffins 100 by Surya, cool drinks 80 by Komal; shares as typed):
 
-| | Share | Paid | Share − paid |
-|---|---|---|---|
-| K Gopal | 20 + 30 + 20 = 70 | 60 | **owes 10** |
-| Surya | 20 + 40 + 40 = 100 | 100 | even |
-| Komal Kumar | 20 + 30 + 20 = 70 | 80 | **gets back 10** |
+|             | Share              | Paid | Share − paid     |
+| ----------- | ------------------ | ---- | ---------------- |
+| K Gopal     | 20 + 30 + 20 = 70  | 60   | **owes 10**      |
+| Surya       | 20 + 40 + 40 = 100 | 100  | even             |
+| Komal Kumar | 20 + 30 + 20 = 70  | 80   | **gets back 10** |
 
 → one payment: **K Gopal → Komal Kumar ₹10**.
 

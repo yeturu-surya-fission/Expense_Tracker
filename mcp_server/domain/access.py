@@ -1,4 +1,5 @@
 """Who may use the system. Policy lives here, in the server, so every client gets the same answer."""
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mcp_server.config import settings

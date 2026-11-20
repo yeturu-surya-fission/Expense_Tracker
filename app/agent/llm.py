@@ -1,4 +1,5 @@
 """CodeVector LLM (OpenAI-compatible) gateway for the Telegram bot agent."""
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
@@ -18,10 +19,15 @@ def _clean(key: str) -> str:
 def get_llm() -> BaseChatModel:
     key = _clean(settings.codevector_api_key)
     if not key:
-        raise LLMConfigError("CODEVECTOR_API_KEY is empty. Put your CodeVector key in .env")
+        raise LLMConfigError(
+            "CODEVECTOR_API_KEY is empty. Put your CodeVector key in .env"
+        )
 
     model = settings.codevector_model or "dev-model-alpha"
-    base_url = settings.codevector_base_url or "https://coding-gateway.fissionlabs.com/gateway/openai/v1"
+    base_url = (
+        settings.codevector_base_url
+        or "https://coding-gateway.fissionlabs.com/gateway/openai/v1"
+    )
     temp = settings.llm_temperature
 
     return ChatOpenAI(

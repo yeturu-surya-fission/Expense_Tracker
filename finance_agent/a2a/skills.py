@@ -10,6 +10,7 @@ none of this knows about the A2A protocol (executor.py turns results into task s
     claim_reply    answer our questions (nights, receipt...) or the manager's question
     claim_status   where is my claim?
 """
+
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Literal
 
@@ -48,14 +49,19 @@ async def _member(session, payload: dict, caller: Caller) -> tuple[Company, Empl
     company = await store.company_by_code(session, code) if code else None
     emp = await claims.employee(session, company.id, caller.ref) if company else None
     if company is None or emp is None:
-        raise SkillError("You haven't joined a company yet. Join with the code your manager gave you.")
+        raise SkillError(
+            "You haven't joined a company yet. Join with the code your manager gave you."
+        )
     return company, emp
 
 
 def _needs_text(claim) -> str:
     questions = [q for v in texts.verdicts_of(claim) for q in v.questions]
     by_ref = {i.ref: i for i in texts.items_of(claim)}
-    lines = [f"• {(by_ref[q.ref].description or by_ref[q.ref].category or f'item {q.ref}')}: {q.text}" for q in questions]
+    lines = [
+        f"• {(by_ref[q.ref].description or by_ref[q.ref].category or f'item {q.ref}')}: {q.text}"
+        for q in questions
+    ]
     return "To check your claim I need a little more:\n" + "\n".join(lines)
 
 
@@ -70,30 +76,52 @@ def _claim_result(claim) -> SkillResult:
     data = {"claim_id": claim.id, "status": claim.status}
     if claim.status == "needs_info":
         qs = [q.model_dump() for v in texts.verdicts_of(claim) for q in v.questions]
-        return SkillResult("input_required", _needs_text(claim), {**data, "questions": qs})
+        return SkillResult(
+            "input_required", _needs_text(claim), {**data, "questions": qs}
+        )
     lines = texts.lines(claim)
     text = (
-        f"📨 Claim #{texts.no(claim)} ({claim.title}) is with your manager.\n\n" + "\n".join(lines) +
-        f"\n\nThe policy suggests {money(claim.recommended)} of {money(texts.claimed_total(claim))}. Your manager makes the final call."
+        f"📨 Claim #{texts.no(claim)} ({claim.title}) is with your manager.\n\n"
+        + "\n".join(lines)
+        + f"\n\nThe policy suggests {money(claim.recommended)} of {money(texts.claimed_total(claim))}. Your manager makes the final call."
     )
-    return SkillResult("completed", text, {**data, "recommended": str(claim.recommended), "claimed": str(texts.claimed_total(claim)), "lines": lines})
+    return SkillResult(
+        "completed",
+        text,
+        {
+            **data,
+            "recommended": str(claim.recommended),
+            "claimed": str(texts.claimed_total(claim)),
+            "lines": lines,
+        },
+    )
 
 
 # ------------------------------------------------------------------ skills
-async def join_company(llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str) -> SkillResult:
+async def join_company(
+    llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str
+) -> SkillResult:
     code = str(payload.get("code") or "").strip()
     async with session_scope() as s:
         company = await store.company_by_code(s, code) if code else None
         if company is None:
-            raise SkillError("I don't know that company code. Please check it with your manager.")
+            raise SkillError(
+                "I don't know that company code. Please check it with your manager."
+            )
         _, created = await claims.join(s, company, caller.ref, caller.name)
         policy = await store.current(s, company.id)
         name, code = company.name, company.code
     note = "" if policy else " (Your manager hasn't published the policy yet.)"
-    return SkillResult("completed", f"🏢 You're {'now part of' if created else 'already in'} {name}.{note}", {"company": code, "company_name": name, "has_policy": policy is not None})
+    return SkillResult(
+        "completed",
+        f"🏢 You're {'now part of' if created else 'already in'} {name}.{note}",
+        {"company": code, "company_name": name, "has_policy": policy is not None},
+    )
 
 
-async def ask_policy(llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str) -> SkillResult:
+async def ask_policy(
+    llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str
+) -> SkillResult:
     question = str(payload.get("question") or text).strip()
     if not question:
         raise SkillError("What would you like to know?")
@@ -101,7 +129,11 @@ async def ask_policy(llm: LLM, caller: Caller, payload: dict, task_id: str | Non
         company, emp = await _member(s, payload, caller)
         policy = await store.current(s, company.id)
         if policy is None:
-            return SkillResult("completed", "Your company hasn't published a reimbursement policy yet.", {"outcome": "no_policy", "can_escalate": True})
+            return SkillResult(
+                "completed",
+                "Your company hasn't published a reimbursement policy yet.",
+                {"outcome": "no_policy", "can_escalate": True},
+            )
         version, rules = policy
         session = await s.get(QaSession, task_id) if task_id else None
         if session is not None and session.employee_id != emp.id:
@@ -117,10 +149,16 @@ async def ask_policy(llm: LLM, caller: Caller, payload: dict, task_id: str | Non
             return SkillResult("input_required", result.text, {"outcome": "need_info"})
         if session is not None:
             await s.delete(session)
-    return SkillResult("completed", result.text, {"outcome": result.status, "can_escalate": result.can_escalate})
+    return SkillResult(
+        "completed",
+        result.text,
+        {"outcome": result.status, "can_escalate": result.can_escalate},
+    )
 
 
-async def ask_manager(llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str) -> SkillResult:
+async def ask_manager(
+    llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str
+) -> SkillResult:
     question = str(payload.get("question") or text).strip()[:1000]
     if not question:
         raise SkillError("What would you like to ask your manager?")
@@ -130,27 +168,45 @@ async def ask_manager(llm: LLM, caller: Caller, payload: dict, task_id: str | No
         s.add(q)
         await s.flush()
         await outbox.to_manager(
-            s, company.manager_telegram_id, f"❓ {emp.name} asks:\n“{question}”\n\nThe policy doesn't cover this. Your answer goes straight back to them.",
+            s,
+            company.manager_telegram_id,
+            f"❓ {emp.name} asks:\n“{question}”\n\nThe policy doesn't cover this. Your answer goes straight back to them.",
             [[{"label": "💬 Answer", "data": f"fq:answer:{q.id}"}]],
         )
         qid = q.id
-    return SkillResult("completed", "📨 I've sent your question to your manager. I'll message you when they answer.", {"question_id": qid})
+    return SkillResult(
+        "completed",
+        "📨 I've sent your question to your manager. I'll message you when they answer.",
+        {"question_id": qid},
+    )
 
 
-async def submit_claim(llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str) -> SkillResult:
+async def submit_claim(
+    llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str
+) -> SkillResult:
     items = payload.get("items")
     if not isinstance(items, list):
         raise SkillError("A claim needs a list of items.")
     async with session_scope() as s:
         company, emp = await _member(s, payload, caller)
         claim = await claims.submit(
-            s, llm, company, emp, str(payload.get("title") or "Expense claim"), items, _int_or_none(payload.get("external_no")),
-            payload.get("receipts") if isinstance(payload.get("receipts"), list) else None,
+            s,
+            llm,
+            company,
+            emp,
+            str(payload.get("title") or "Expense claim"),
+            items,
+            _int_or_none(payload.get("external_no")),
+            payload.get("receipts")
+            if isinstance(payload.get("receipts"), list)
+            else None,
         )
         return _claim_result(claim)
 
 
-async def check_expense(llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str) -> SkillResult:
+async def check_expense(
+    llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str
+) -> SkillResult:
     """
     Look at ONE work expense as soon as it is logged, so the employee is asked for what the policy needs (receipt, nights, days,
     approval, city tier) now and not when the claim is sent. Nothing is stored here.
@@ -166,18 +222,52 @@ async def check_expense(llm: LLM, caller: Caller, payload: dict, task_id: str | 
         company, _ = await _member(s, payload, caller)
         policy = await store.current(s, company.id)
     if policy is None:
-        return SkillResult("completed", "", {"questions": [], "receipt_required": False, "checked": False})
+        return SkillResult(
+            "completed",
+            "",
+            {"questions": [], "receipt_required": False, "checked": False},
+        )
     _, rules = policy
-    rule = await review.rule_for(llm, rules, item)  # (outside any transaction: this may call the model)
+    rule = await review.rule_for(
+        llm, rules, item
+    )  # (outside any transaction: this may call the model)
     if rule is None or not rule.covered:
-        return SkillResult("completed", "", {"questions": [], "receipt_required": False, "checked": True, "rule": rule.name if rule else None})
-    receipt = rule.receipt_over is not None and item.amount is not None and item.amount > rule.receipt_over
+        return SkillResult(
+            "completed",
+            "",
+            {
+                "questions": [],
+                "receipt_required": False,
+                "checked": True,
+                "rule": rule.name if rule else None,
+            },
+        )
+    receipt = (
+        rule.receipt_over is not None
+        and item.amount is not None
+        and item.amount > rule.receipt_over
+    )
     # the receipt is asked for as a FILE, so a spoken "yes I have it" doesn't settle it: leave has_receipt out of what the engine sees
-    questions = [{"key": q.key, "text": q.text} for q in evaluate(rule, item.model_copy(update={"has_receipt": None})).questions if q.key != "has_receipt"]
-    return SkillResult("completed", "", {"questions": questions, "receipt_required": receipt, "checked": True, "rule": rule.name})
+    questions = [
+        {"key": q.key, "text": q.text}
+        for q in evaluate(rule, item.model_copy(update={"has_receipt": None})).questions
+        if q.key != "has_receipt"
+    ]
+    return SkillResult(
+        "completed",
+        "",
+        {
+            "questions": questions,
+            "receipt_required": receipt,
+            "checked": True,
+            "rule": rule.name,
+        },
+    )
 
 
-async def claim_reply(llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str) -> SkillResult:
+async def claim_reply(
+    llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str
+) -> SkillResult:
     try:
         claim_id = int(payload["claim_id"])
     except (KeyError, TypeError, ValueError):
@@ -186,16 +276,31 @@ async def claim_reply(llm: LLM, caller: Caller, payload: dict, task_id: str | No
         company, emp = await _member(s, payload, caller)
         claim = await claims.get(s, claim_id, company_id=company.id, employee_id=emp.id)
         if payload.get("answers"):
-            claim = await claims.answer(s, llm, company, emp, claim, {int(k): v for k, v in payload["answers"].items()})
+            claim = await claims.answer(
+                s,
+                llm,
+                company,
+                emp,
+                claim,
+                {int(k): v for k, v in payload["answers"].items()},
+            )
         elif str(payload.get("text") or "").strip():
-            claim = await claims.employee_reply(s, claim, emp, company, str(payload["text"]))
-            return SkillResult("completed", f"📨 Passed to your manager: claim #{texts.no(claim)} is back with them.", {"claim_id": claim.id, "status": claim.status})
+            claim = await claims.employee_reply(
+                s, claim, emp, company, str(payload["text"])
+            )
+            return SkillResult(
+                "completed",
+                f"📨 Passed to your manager: claim #{texts.no(claim)} is back with them.",
+                {"claim_id": claim.id, "status": claim.status},
+            )
         else:
             raise SkillError("Tell me the details, or your reply to the manager.")
         return _claim_result(claim)
 
 
-async def claim_status(llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str) -> SkillResult:
+async def claim_status(
+    llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str
+) -> SkillResult:
     try:
         claim_id = int(payload["claim_id"])
     except (KeyError, TypeError, ValueError):
@@ -204,21 +309,40 @@ async def claim_status(llm: LLM, caller: Caller, payload: dict, task_id: str | N
         company, emp = await _member(s, payload, caller)
         claim = await claims.get(s, claim_id, company_id=company.id, employee_id=emp.id)
         body = texts.employee_decision(claim)
-        return SkillResult("completed", body, {"claim_id": claim.id, "status": claim.status, "approved_amount": str(claim.approved_amount) if claim.approved_amount is not None else None})
+        return SkillResult(
+            "completed",
+            body,
+            {
+                "claim_id": claim.id,
+                "status": claim.status,
+                "approved_amount": str(claim.approved_amount)
+                if claim.approved_amount is not None
+                else None,
+            },
+        )
 
 
 Handler = Callable[[LLM, Caller, dict, "str | None", str], Awaitable[SkillResult]]
 SKILLS: dict[str, Handler] = {
-    "join_company": join_company, "ask_policy": ask_policy, "ask_manager": ask_manager, "check_expense": check_expense,
-    "submit_claim": submit_claim, "claim_reply": claim_reply, "claim_status": claim_status,
+    "join_company": join_company,
+    "ask_policy": ask_policy,
+    "ask_manager": ask_manager,
+    "check_expense": check_expense,
+    "submit_claim": submit_claim,
+    "claim_reply": claim_reply,
+    "claim_status": claim_status,
 }
 
 
-async def run(llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str) -> SkillResult:
+async def run(
+    llm: LLM, caller: Caller, payload: dict, task_id: str | None, text: str
+) -> SkillResult:
     """Run the skill the caller asked for. Plain-words problems become a failed result."""
     handler = SKILLS.get(str(payload.get("skill") or ""))
     if handler is None:
-        return SkillResult("failed", f"I don't know that skill. I can do: {', '.join(SKILLS)}.")
+        return SkillResult(
+            "failed", f"I don't know that skill. I can do: {', '.join(SKILLS)}."
+        )
     try:
         return await handler(llm, caller, payload, task_id, text)
     except (SkillError, claims.ClaimError, store.PolicyError) as e:

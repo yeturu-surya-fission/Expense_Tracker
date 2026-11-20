@@ -2,6 +2,7 @@
 The Finance Agent tells us what the manager decided: POST /a2a/webhook, signed with HMAC-SHA256 over the body using a secret
 only the two services share. Each event becomes a message for the employee through the normal outbox.
 """
+
 import hmac
 import hashlib
 import json
@@ -24,13 +25,24 @@ MAX_BODY = 64 * 1024
 
 
 def sign(body: bytes) -> str:
-    return "sha256=" + hmac.new(settings.finance_webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+    return (
+        "sha256="
+        + hmac.new(
+            settings.finance_webhook_secret.encode(), body, hashlib.sha256
+        ).hexdigest()
+    )
 
 
 async def finance_webhook(request: Request) -> JSONResponse:
     body = await request.body()
-    if not settings.finance_webhook_secret or len(body) > MAX_BODY or not hmac.compare_digest(request.headers.get("x-signature", ""), sign(body)):
-        await audit("client:finance-agent", None, "a2a.webhook", "denied", "bad signature")
+    if (
+        not settings.finance_webhook_secret
+        or len(body) > MAX_BODY
+        or not hmac.compare_digest(request.headers.get("x-signature", ""), sign(body))
+    ):
+        await audit(
+            "client:finance-agent", None, "a2a.webhook", "denied", "bad signature"
+        )
         return JSONResponse({"error": "invalid_signature"}, status_code=401)
     if rate_limited("webhook:finance", 600):
         return JSONResponse({"error": "slow_down"}, status_code=429)
@@ -47,20 +59,45 @@ async def finance_webhook(request: Request) -> JSONResponse:
         if user is None:
             return JSONResponse({"error": "unknown_employee"}, status_code=404)
         if event in ("claim_update", "claim_question"):
-            claim = (await s.execute(
-                select(WorkClaim).where(WorkClaim.user_id == uid, WorkClaim.remote_claim_id == int(payload["claim_id"])).with_for_update()
-            )).scalar_one_or_none()
+            claim = (
+                await s.execute(
+                    select(WorkClaim)
+                    .where(
+                        WorkClaim.user_id == uid,
+                        WorkClaim.remote_claim_id == int(payload["claim_id"]),
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
             if claim is None:
                 return JSONResponse({"error": "unknown_claim"}, status_code=404)
-            status = "info_requested" if event == "claim_question" else str(payload.get("status", claim.status))
-            approved = Decimal(str(payload["approved_amount"])) if payload.get("approved_amount") is not None else claim.approved_amount
-            if event == "claim_update" and claim.status == status and claim.approved_amount == approved:
-                return JSONResponse({"ok": True, "duplicate": True})  # the same news twice (a retry): tell the person once
+            status = (
+                "info_requested"
+                if event == "claim_question"
+                else str(payload.get("status", claim.status))
+            )
+            approved = (
+                Decimal(str(payload["approved_amount"]))
+                if payload.get("approved_amount") is not None
+                else claim.approved_amount
+            )
+            if (
+                event == "claim_update"
+                and claim.status == status
+                and claim.approved_amount == approved
+            ):
+                return JSONResponse(
+                    {"ok": True, "duplicate": True}
+                )  # the same news twice (a retry): tell the person once
             claim.status, claim.approved_amount = status, approved
             if isinstance(payload.get("items"), list):
-                claim.decided_items = payload["items"]  # which expense was paid, and which was cut
+                claim.decided_items = payload[
+                    "items"
+                ]  # which expense was paid, and which was cut
             if event == "claim_question":
-                claim.note = str(payload.get("question") or "")[:500] or None  # shown in /claims so the person knows what to answer
+                claim.note = (
+                    str(payload.get("question") or "")[:500] or None
+                )  # shown in /claims so the person knows what to answer
             elif payload.get("note"):
                 claim.note = str(payload["note"])[:500]
             claim.questions = None

@@ -3,6 +3,7 @@
 Why not plain `uvicorn app.main:app`? On Windows uvicorn uses the Proactor event loop, which
 psycopg (LangGraph's Postgres checkpointer) cannot use. A selector loop works everywhere.
 """
+
 import asyncio
 
 import uvicorn

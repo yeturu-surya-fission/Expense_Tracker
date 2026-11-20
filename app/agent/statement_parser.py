@@ -7,6 +7,7 @@ Safety notes
   core/statements.py re-validates every number and date anyway.
 - If ANY chunk fails the whole parse fails: a silently missing page would corrupt the balances.
 """
+
 import asyncio
 import logging
 
@@ -20,6 +21,7 @@ log = logging.getLogger(__name__)
 
 class StatementError(Exception):
     """The model could not read part of the statement reliably."""
+
 
 CHUNK_CHARS = 4500
 CONCURRENCY = 2  # free-tier LLM keys allow only a few requests per minute
@@ -74,7 +76,12 @@ def split_chunks(pages: list[str], limit: int = CHUNK_CHARS) -> list[str]:
 
 
 async def parse_pages(
-    llm: BaseChatModel, pages: list[str], *, categories: list[str], today: str, user_categories: list[str] | None = None,
+    llm: BaseChatModel,
+    pages: list[str],
+    *,
+    categories: list[str],
+    today: str,
+    user_categories: list[str] | None = None,
 ) -> list[dict]:
     """`categories` and `today` come from the server (statement_read_pdf), so the allowed list lives in one place."""
     categories = list(dict.fromkeys([*categories, *(user_categories or [])]))
@@ -88,13 +95,19 @@ async def parse_pages(
                 if wait:
                     await asyncio.sleep(wait)
                 try:
-                    out = await asyncio.wait_for(structured.ainvoke([system, HumanMessage(text)]), CHUNK_TIMEOUT)
+                    out = await asyncio.wait_for(
+                        structured.ainvoke([system, HumanMessage(text)]), CHUNK_TIMEOUT
+                    )
                     if out is None:
                         raise ValueError("model returned nothing")
                     return [r.model_dump() for r in out.transactions]
                 except Exception as e:
-                    log.warning("statement chunk %s attempt %s failed: %s", idx, attempt, e)
-            raise StatementError("I couldn't read part of that statement reliably, so I imported nothing. Please try again.")
+                    log.warning(
+                        "statement chunk %s attempt %s failed: %s", idx, attempt, e
+                    )
+            raise StatementError(
+                "I couldn't read part of that statement reliably, so I imported nothing. Please try again."
+            )
 
     chunks = split_chunks(pages)
     results = await asyncio.gather(*(one(i, c) for i, c in enumerate(chunks)))

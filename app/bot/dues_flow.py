@@ -1,4 +1,5 @@
 """The payment buttons: the person who owes taps 'I paid', the person who is owed taps 'Received' or 'Not yet'."""
+
 from telegram import User as TgUser
 
 from app.bot import keyboards as kb
@@ -16,13 +17,18 @@ class DueMixin(BotBase):
             await q.message.reply_text(res.message.replace("❌ ", "ℹ️ ", 1))
             return
         dues = await self.call(ident, "ui_view", view="dues")
-        await q.edit_message_text(f"{res.text}\n\n{dues.message}", reply_markup=kb.dues_keyboard(dues.data.get("dues")))
+        await q.edit_message_text(
+            f"{res.text}\n\n{dues.message}",
+            reply_markup=kb.dues_keyboard(dues.data.get("dues")),
+        )
 
     async def _due(self, q, tg: TgUser, arg: str) -> None:
         raw_id, _, action = arg.partition(":")
         if not raw_id.isdigit() or action not in ACTIONS:
             return
-        res = await self.call(self.private(tg), "debt_action", debt_id=int(raw_id), action=action)
+        res = await self.call(
+            self.private(tg), "debt_action", debt_id=int(raw_id), action=action
+        )
         if not res.ok:
             await q.message.reply_text(res.message.replace("❌ ", "ℹ️ ", 1))
             return

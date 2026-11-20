@@ -7,6 +7,7 @@ A *period* string can be:
   YYYY-MM-DD                   a specific day
   YYYY-MM-DD..YYYY-MM-DD       an inclusive date range
 """
+
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -15,8 +16,15 @@ from zoneinfo import ZoneInfo
 from mcp_server.config import settings
 
 PERIOD_NAMES = (
-    "today", "yesterday", "this_week", "last_7_days", "last_30_days", "this_month",
-    "last_month", "this_year", "all_time",
+    "today",
+    "yesterday",
+    "this_week",
+    "last_7_days",
+    "last_30_days",
+    "this_month",
+    "last_month",
+    "this_year",
+    "all_time",
 )
 PERIOD_HELP = (
     "today, yesterday, this_week, last_7_days, last_30_days, this_month, last_month, this_year, all_time, "
@@ -55,8 +63,13 @@ def _midnight(d: date) -> datetime:
     return datetime.combine(d, time.min, tzinfo=tz())
 
 
-def _utc(a: datetime | None, b: datetime | None) -> tuple[datetime | None, datetime | None]:
-    return (a.astimezone(timezone.utc) if a else None, b.astimezone(timezone.utc) if b else None)
+def _utc(
+    a: datetime | None, b: datetime | None
+) -> tuple[datetime | None, datetime | None]:
+    return (
+        a.astimezone(timezone.utc) if a else None,
+        b.astimezone(timezone.utc) if b else None,
+    )
 
 
 # ------------------------------------------------------------------ months
@@ -92,7 +105,9 @@ def current_month() -> Period:
 # ------------------------------------------------------------------ any period text
 def resolve_period(name: str) -> Period:
     text = (name or "all_time").lower().strip()
-    raw = text.replace(" ", "") if ".." in text else "_".join(text.split())  # 'this month' = this_month; '2026-10-01 .. 2026-10-15' = a range
+    raw = (
+        text.replace(" ", "") if ".." in text else "_".join(text.split())
+    )  # 'this month' = this_month; '2026-10-01 .. 2026-10-15' = a range
     today = now_local().date()
     tomorrow = _midnight(today + timedelta(days=1))
 
@@ -100,29 +115,45 @@ def resolve_period(name: str) -> Period:
         try:
             a, b = date.fromisoformat(m[1]), date.fromisoformat(m[2])
         except ValueError:
-            raise PeriodError("That date range isn't valid (use YYYY-MM-DD..YYYY-MM-DD).") from None
+            raise PeriodError(
+                "That date range isn't valid (use YYYY-MM-DD..YYYY-MM-DD)."
+            ) from None
         if b < a:
             a, b = b, a
-        return Period(f"{a:%d %b} - {b:%d %b %Y}", *_utc(_midnight(a), _midnight(b + timedelta(days=1))))
+        return Period(
+            f"{a:%d %b} - {b:%d %b %Y}",
+            *_utc(_midnight(a), _midnight(b + timedelta(days=1))),
+        )
     if m := _DAY_RE.match(raw):
         try:
             d = date.fromisoformat(raw)
         except ValueError:
             raise PeriodError("That date isn't valid (use YYYY-MM-DD).") from None
-        return Period(f"{d:%d %b %Y}", *_utc(_midnight(d), _midnight(d + timedelta(days=1))))
+        return Period(
+            f"{d:%d %b %Y}", *_utc(_midnight(d), _midnight(d + timedelta(days=1)))
+        )
     if _MONTH_RE.match(raw):
         return month_period(raw)
 
     if raw == "today":
         return Period("today", *_utc(_midnight(today), tomorrow))
     if raw == "yesterday":
-        return Period("yesterday", *_utc(_midnight(today - timedelta(days=1)), _midnight(today)))
+        return Period(
+            "yesterday", *_utc(_midnight(today - timedelta(days=1)), _midnight(today))
+        )
     if raw == "this_week":
-        return Period("this week", *_utc(_midnight(today - timedelta(days=today.weekday())), tomorrow))
+        return Period(
+            "this week",
+            *_utc(_midnight(today - timedelta(days=today.weekday())), tomorrow),
+        )
     if raw == "last_7_days":
-        return Period("last 7 days", *_utc(_midnight(today - timedelta(days=6)), tomorrow))
+        return Period(
+            "last 7 days", *_utc(_midnight(today - timedelta(days=6)), tomorrow)
+        )
     if raw == "last_30_days":
-        return Period("last 30 days", *_utc(_midnight(today - timedelta(days=29)), tomorrow))
+        return Period(
+            "last 30 days", *_utc(_midnight(today - timedelta(days=29)), tomorrow)
+        )
     if raw == "this_month":
         p = month_period(month_key())
         return Period(f"this month ({p.label})", p.start, p.end)
@@ -130,7 +161,9 @@ def resolve_period(name: str) -> Period:
         p = month_period(shift_month(month_key(), -1))
         return Period(f"last month ({p.label})", p.start, p.end)
     if raw == "this_year":
-        return Period(f"{today.year}", *_utc(_midnight(date(today.year, 1, 1)), tomorrow))
+        return Period(
+            f"{today.year}", *_utc(_midnight(date(today.year, 1, 1)), tomorrow)
+        )
     if raw in ("all_time", "all", "alltime"):
         return Period("all time", None, None)
     raise PeriodError(f"I don't understand the period '{name}'. Use: {PERIOD_HELP}.")

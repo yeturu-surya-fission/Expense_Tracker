@@ -55,22 +55,22 @@ graph TD;
 
 ### What each node does
 
-| Node | What it does | Calls the LLM? |
-|---|---|---|
-| **agent** | Asks the MCP server for the context (`agent_context`: budget categories and friends, or the group's name and members), builds the system prompt (today's date + that), sends the last 40 messages to the LLM **with the tool set for this chat type**, and gets back tool calls. If the LLM writes plain text instead, that text is thrown away and replaced by the server's fixed refusal. | **Yes** |
-| **tools** | Runs **one** pending tool call as an **MCP request** (Bearer token of this person, an idempotency key, the group's member count if in a group). Refuses a tool that isn't allowed in this chat. If the server answers `input_required`, pauses to ask the user, then calls the same tool again with the answer. | No |
-| **respond** | Joins the tool results into one message and passes the structured `data` the server returned (expense ids, split ids, people to tag) on to the bot, so it can add **Undo / Cancel split** buttons and tag people who need to press Start. | No |
+| Node        | What it does                                                                                                                                                                                                                                                                                                                                                                                | Calls the LLM? |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| **agent**   | Asks the MCP server for the context (`agent_context`: budget categories and friends, or the group's name and members), builds the system prompt (today's date + that), sends the last 40 messages to the LLM **with the tool set for this chat type**, and gets back tool calls. If the LLM writes plain text instead, that text is thrown away and replaced by the server's fixed refusal. | **Yes**        |
+| **tools**   | Runs **one** pending tool call as an **MCP request** (Bearer token of this person, an idempotency key, the group's member count if in a group). Refuses a tool that isn't allowed in this chat. If the server answers `input_required`, pauses to ask the user, then calls the same tool again with the answer.                                                                             | No             |
+| **respond** | Joins the tool results into one message and passes the structured `data` the server returned (expense ids, split ids, people to tag) on to the bot, so it can add **Undo / Cancel split** buttons and tag people who need to press Start.                                                                                                                                                   | No             |
 
 ### The two routing rules (the only decisions in the graph)
 
-| After… | If… | Go to |
-|---|---|---|
-| **agent** | the LLM asked for tools | `tools` |
-| **agent** | the LLM wrote plain text instead | `END` (fixed refusal) |
-| **tools** | some tool calls from the same LLM answer have **not run yet** | `tools` again |
-| **tools** | everything has run and the last batch had an **error** | `agent` |
-| **tools** | everything has run and all were OK | `respond` |
-| **respond** | always | `END` |
+| After…      | If…                                                           | Go to                 |
+| ----------- | ------------------------------------------------------------- | --------------------- |
+| **agent**   | the LLM asked for tools                                       | `tools`               |
+| **agent**   | the LLM wrote plain text instead                              | `END` (fixed refusal) |
+| **tools**   | some tool calls from the same LLM answer have **not run yet** | `tools` again         |
+| **tools**   | everything has run and the last batch had an **error**        | `agent`               |
+| **tools**   | everything has run and all were OK                            | `respond`             |
+| **respond** | always                                                        | `END`                 |
 
 ### Two tool sets, chosen by chat type
 
@@ -167,7 +167,7 @@ already finished are never run twice, so nothing is written twice.
 
 The pause happens **inside** `tools`. The server did not write anything: it returned `input_required` with the question. Tapping a button resumes
 the node, which calls the **same tool again** with the answer (`answers={"split_mode": "equal"}`); the agent isn't called again. The paused state
-lives in the bot's Postgres, so it survives a restart. A tool may ask two questions in a row (*one-off or group?* then *how to split?*): the node
+lives in the bot's Postgres, so it survives a restart. A tool may ask two questions in a row (_one-off or group?_ then _how to split?_): the node
 simply loops, one pause per question.
 
 ```mermaid
@@ -202,17 +202,17 @@ stateDiagram-v2
 
 ## 4. Every possible path
 
-| # | What happens | Path through the graph | LLM calls |
-|---|---|---|---|
-| 1 | Normal request ("spent 300 on lunch") | START → agent → tools → respond → END | 1 |
-| 2 | Several actions in one message | agent → tools → tools → … → respond → END | 1 |
-| 3 | A question is needed (how to split, one-off or group, settle now?) | agent → tools (pauses) … you tap … tools resumes → respond → END | 1 |
-| 4 | A tool fails or isn't allowed here | agent → tools (error) → agent → tools → respond → END | 2 |
-| 5 | Greeting, off-topic, "need more info" | agent → tools (`respond_to_user`, fixed wording) → respond → END | 1 |
-| 6 | The AI breaks the rules with plain text | agent → END (the fixed refusal is sent) | 1 |
-| 7 | You cancel or change topic while a question waits | tools resumes with "cancel" → respond → END, then your new message starts at START | 0 + a new run |
-| 8 | Commands, **I paid / Received / Not yet** taps, group `/summary`, `/people` and `/settle` | never enter the graph: the bot calls the MCP server directly | 0 |
-| 9 | Group chat message that doesn't mention the bot | ignored before the graph | 0 |
+| #   | What happens                                                                              | Path through the graph                                                             | LLM calls     |
+| --- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------- |
+| 1   | Normal request ("spent 300 on lunch")                                                     | START → agent → tools → respond → END                                              | 1             |
+| 2   | Several actions in one message                                                            | agent → tools → tools → … → respond → END                                          | 1             |
+| 3   | A question is needed (how to split, one-off or group, settle now?)                        | agent → tools (pauses) … you tap … tools resumes → respond → END                   | 1             |
+| 4   | A tool fails or isn't allowed here                                                        | agent → tools (error) → agent → tools → respond → END                              | 2             |
+| 5   | Greeting, off-topic, "need more info"                                                     | agent → tools (`respond_to_user`, fixed wording) → respond → END                   | 1             |
+| 6   | The AI breaks the rules with plain text                                                   | agent → END (the fixed refusal is sent)                                            | 1             |
+| 7   | You cancel or change topic while a question waits                                         | tools resumes with "cancel" → respond → END, then your new message starts at START | 0 + a new run |
+| 8   | Commands, **I paid / Received / Not yet** taps, group `/summary`, `/people` and `/settle` | never enter the graph: the bot calls the MCP server directly                       | 0             |
+| 9   | Group chat message that doesn't mention the bot                                           | ignored before the graph                                                           | 0             |
 
 A tool that keeps failing is stopped by a 40-step safety limit, and the user gets a friendly error.
 
@@ -222,13 +222,13 @@ A tool that keeps failing is stopped by a 40-step safety limit, and the user get
 
 The graph state is one list: `messages`. Each node adds to it (it never edits earlier entries). For "spent 300 on ice cream and set a food limit of 3k":
 
-| # | Added by | Message in the list |
-|---|---|---|
-| 1 | you | Human: "spent 300 on ice cream and set a food limit of 3k" |
-| 2 | **agent** | AI: tool_calls = [add_expenses, set_budget] |
-| 3 | **tools** (step 1) | Tool result for add_expenses |
-| 4 | **tools** (step 2) | Tool result for set_budget |
-| 5 | **respond** | AI: the final reply (what you see) |
+| #   | Added by           | Message in the list                                        |
+| --- | ------------------ | ---------------------------------------------------------- |
+| 1   | you                | Human: "spent 300 on ice cream and set a food limit of 3k" |
+| 2   | **agent**          | AI: tool_calls = [add_expenses, set_budget]                |
+| 3   | **tools** (step 1) | Tool result for add_expenses                               |
+| 4   | **tools** (step 2) | Tool result for set_budget                                 |
+| 5   | **respond**        | AI: the final reply (what you see)                         |
 
 After each tool, `pending_tool_calls()` looks at the last AI message and asks **"which of its tool calls don't have a result yet?"**
 Some are missing → `tools` again. None missing → check for errors → `agent` or `respond`.
@@ -240,23 +240,23 @@ so each person has their own conversation memory and their own paused questions,
 
 ## 6. Limits you should know about
 
-| Limit | What it means |
-|---|---|
+| Limit                                        | What it means                                                                                                                                                                   |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **No tool chains that depend on each other** | The LLM sees tool results only when something fails, so it can't do "look at the result, **then** decide the next tool" within one message. It decides all tool calls up front. |
-| **Retry loop is not tightly capped** | After an error the graph returns to `agent`. The prompt asks for one retry, but the real stop is LangGraph's `recursion_limit = 40`. |
-| **Free text is never forwarded** | By design (the guardrail). Even a clarifying question goes through the `respond_to_user` tool. |
+| **Retry loop is not tightly capped**         | After an error the graph returns to `agent`. The prompt asks for one retry, but the real stop is LangGraph's `recursion_limit = 40`.                                            |
+| **Free text is never forwarded**             | By design (the guardrail). Even a clarifying question goes through the `respond_to_user` tool.                                                                                  |
 
 ---
 
 ## 7. Where this lives in the code
 
-| Piece | File |
-|---|---|
-| Graph, routing rules, `respond` node, the question loop | `app/agent/graph.py` |
-| Tool lists shown to the LLM (private / group) | `app/agent/toolsets.py` |
-| Pause and resume (`interrupt`, answer screening) | `app/agent/runner.py` |
-| MCP requests, tokens, tool schemas for the LLM | `app/mcp_client/gateway.py`, `app/mcp_client/schema.py` |
-| The tools themselves, their gate (scope, chat, rate limit, idempotency) | `mcp_server/tools/registry.py`, `mcp_server/tools/*.py` |
-| How a tool asks a question (`NeedInput` before any write) | `mcp_server/tools/_common.py` |
-| Structured data → buttons | `ToolResult.data` → `respond` node → `app/bot/keyboards.py` |
-| Guardrail wording (refusal, greeting, help) | `mcp_server/domain/guardrails.py`, `mcp_server/tools/conversation.py` |
+| Piece                                                                   | File                                                                  |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Graph, routing rules, `respond` node, the question loop                 | `app/agent/graph.py`                                                  |
+| Tool lists shown to the LLM (private / group)                           | `app/agent/toolsets.py`                                               |
+| Pause and resume (`interrupt`, answer screening)                        | `app/agent/runner.py`                                                 |
+| MCP requests, tokens, tool schemas for the LLM                          | `app/mcp_client/gateway.py`, `app/mcp_client/schema.py`               |
+| The tools themselves, their gate (scope, chat, rate limit, idempotency) | `mcp_server/tools/registry.py`, `mcp_server/tools/*.py`               |
+| How a tool asks a question (`NeedInput` before any write)               | `mcp_server/tools/_common.py`                                         |
+| Structured data → buttons                                               | `ToolResult.data` → `respond` node → `app/bot/keyboards.py`           |
+| Guardrail wording (refusal, greeting, help)                             | `mcp_server/domain/guardrails.py`, `mcp_server/tools/conversation.py` |

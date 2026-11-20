@@ -26,7 +26,9 @@ class ScriptedLLM(BaseChatModel):
         return "scripted"
 
     def bind_tools(self, tools, **kwargs):
-        self.seen_tools.append([t["name"] if isinstance(t, dict) else t.name for t in tools])
+        self.seen_tools.append(
+            [t["name"] if isinstance(t, dict) else t.name for t in tools]
+        )
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
@@ -36,17 +38,39 @@ class ScriptedLLM(BaseChatModel):
 
 
 def tool_call(name: str, args: dict, id_: str | None = None) -> AIMessage:
-    return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": id_ or f"call_{next(_call_ids)}", "type": "tool_call"}])
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": name,
+                "args": args,
+                "id": id_ or f"call_{next(_call_ids)}",
+                "type": "tool_call",
+            }
+        ],
+    )
 
 
 def tool_calls(*calls: tuple[str, dict]) -> AIMessage:
-    return AIMessage(content="", tool_calls=[{"name": n, "args": a, "id": f"call_{next(_call_ids)}", "type": "tool_call"} for n, a in calls])
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {"name": n, "args": a, "id": f"call_{next(_call_ids)}", "type": "tool_call"}
+            for n, a in calls
+        ],
+    )
 
 
 @pytest.fixture(scope="session")
 async def gateway(harness):
     """The bot's real MCP client, wired to the in-process server (HTTP semantics, no sockets)."""
-    gw = McpGateway("http://testserver/mcp", "http://testserver", "telegram-bot", "test-bot-secret", asgi_app=harness.app)
+    gw = McpGateway(
+        "http://testserver/mcp",
+        "http://testserver",
+        "telegram-bot",
+        "test-bot-secret",
+        asgi_app=harness.app,
+    )
     yield gw
     await gw.close()
 
@@ -59,7 +83,12 @@ async def tool_defs(gateway):
 @pytest.fixture
 def make_runner(gateway, tool_defs):
     def _make(*script: AIMessage) -> AgentRunner:
-        return AgentRunner(build_graph(ScriptedLLM(script=list(script)), gateway, tool_defs, MemorySaver()))
+        return AgentRunner(
+            build_graph(
+                ScriptedLLM(script=list(script)), gateway, tool_defs, MemorySaver()
+            )
+        )
+
     return _make
 
 
@@ -68,6 +97,13 @@ def ident():
     from tests.harness import new_telegram_id
 
     def _ident(name="Kiran", *, group=None, title=None, telegram_id=None) -> Identity:
-        return Identity(telegram_id=telegram_id or new_telegram_id(), name=name, chat_type="group" if group else "private",
-                        group_chat_id=group, group_title=title, started=not group)
+        return Identity(
+            telegram_id=telegram_id or new_telegram_id(),
+            name=name,
+            chat_type="group" if group else "private",
+            group_chat_id=group,
+            group_title=title,
+            started=not group,
+        )
+
     return _ident

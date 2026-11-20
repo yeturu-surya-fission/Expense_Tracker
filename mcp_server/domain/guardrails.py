@@ -9,7 +9,7 @@ SCOPE_MESSAGE = (
     "Try: spent 200 on lunch"
 )
 
-GREETING = "👋 Hi! Tell me what you spent, e.g. \"spent 200 on lunch\", split a bill with friends, or send a bank-statement PDF."
+GREETING = '👋 Hi! Tell me what you spent, e.g. "spent 200 on lunch", split a bill with friends, or send a bank-statement PDF.'
 
 HELP = (
     "👋 I'm your expense tracker. Just talk to me:\n\n"

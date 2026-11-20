@@ -60,7 +60,7 @@ flowchart LR
     class A2,PO,EN fin
 ```
 
-*Our system at a glance. The story of how it began is in [ORIGIN_STORY](../ORIGIN_STORY.md).*
+_Our system at a glance. The story of how it began is in [ORIGIN_STORY](../ORIGIN_STORY.md)._
 
 ## It started with ice cream
 
@@ -68,7 +68,7 @@ We wanted one thing: tell a chat what you spent, in your own words, and have it 
 
 The bot adds budgets with alerts at 50, 80 and 100 percent. It splits dinners with friends ("dinner 3000, split equally with Surya, Ravi and Anil"). It even shows one total per person in a dues view, and if you owe Surya ₹50 while he owes you ₹50, it quietly cancels both.
 
-Fun, useful, and then a teammate asked: *"Can it do my work expenses too?"*
+Fun, useful, and then a teammate asked: _"Can it do my work expenses too?"_
 
 ## Rule number one: the model is a translator
 
@@ -158,4 +158,4 @@ Receipts are a yes/no check, not photo reading. One person, one company. "Paid" 
 
 The code and docs (architecture, MCP, reimbursement flow) are in the repo. If you're wiring agents around money or approvals, we'd love to hear how you drew your lines.
 
-*Built at Fission Labs.*
+_Built at Fission Labs._

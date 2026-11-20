@@ -33,7 +33,9 @@ class User(Base):
     name: Mapped[str | None] = mapped_column(String(128))
     username: Mapped[str | None] = mapped_column(String(64))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class Friend(Base):
@@ -43,10 +45,16 @@ class Friend(Base):
     __table_args__ = (UniqueConstraint("owner_id", "friend_id", name="uq_friend_pair"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    friend_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    friend_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     nickname: Mapped[str] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 # ====================================================================== personal expenses
@@ -65,12 +73,22 @@ class Expense(Base):
     amount: Mapped[Decimal] = mapped_column(MONEY)
     category: Mapped[str] = mapped_column(String(64))
     description: Mapped[str | None] = mapped_column(String(256))
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    source: Mapped[str] = mapped_column(String(12), default="personal")  # personal | split | statement
-    external_key: Mapped[str | None] = mapped_column(String(40), index=True)  # statement dedupe
-    import_id: Mapped[int | None] = mapped_column(ForeignKey("statement_imports.id", ondelete="SET NULL"), index=True)
+    source: Mapped[str] = mapped_column(
+        String(12), default="personal"
+    )  # personal | split | statement
+    external_key: Mapped[str | None] = mapped_column(
+        String(40), index=True
+    )  # statement dedupe
+    import_id: Mapped[int | None] = mapped_column(
+        ForeignKey("statement_imports.id", ondelete="SET NULL"), index=True
+    )
 
 
 class StatementImport(Base):
@@ -79,18 +97,26 @@ class StatementImport(Base):
     __tablename__ = "statement_imports"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     filename: Mapped[str | None] = mapped_column(String(256))
-    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending|done|cancelled|undone
+    status: Mapped[str] = mapped_column(
+        String(12), default="pending"
+    )  # pending|done|cancelled|undone
     items: Mapped[list] = mapped_column(JSONB)
     meta: Mapped[dict] = mapped_column(JSONB)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 # ====================================================================== budgets
 class Budget(Base):
     __tablename__ = "budgets"
-    __table_args__ = (UniqueConstraint("user_id", "category", name="uq_budget_user_category"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "category", name="uq_budget_user_category"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
@@ -102,13 +128,17 @@ class BudgetAlert(Base):
     """Remembers which thresholds were already announced this month so alerts fire once."""
 
     __tablename__ = "budget_alerts"
-    __table_args__ = (UniqueConstraint("budget_id", "period", "threshold", name="uq_alert_once"),)
+    __table_args__ = (
+        UniqueConstraint("budget_id", "period", "threshold", name="uq_alert_once"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     budget_id: Mapped[int] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"))
     period: Mapped[str] = mapped_column(String(7))  # "2026-10"
     threshold: Mapped[int]
-    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 # ====================================================================== groups (a Telegram group chat = one expense group)
@@ -116,11 +146,17 @@ class Group(Base):
     __tablename__ = "groups"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)  # the Telegram group chat
+    chat_id: Mapped[int] = mapped_column(
+        BigInteger, unique=True, index=True
+    )  # the Telegram group chat
     name: Mapped[str] = mapped_column(String(128))
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    default_split: Mapped[str | None] = mapped_column(String(8))  # 'equal' = stop asking
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    default_split: Mapped[str | None] = mapped_column(
+        String(8)
+    )  # 'equal' = stop asking
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class GroupMember(Base):
@@ -128,10 +164,18 @@ class GroupMember(Base):
     __table_args__ = (UniqueConstraint("group_id", "user_id", name="uq_group_member"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # set when they leave the Telegram group
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    left_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )  # set when they leave the Telegram group
 
 
 # ====================================================================== shared expenses and who owes whom
@@ -142,30 +186,44 @@ class SharedExpense(Base):
     __table_args__ = (CheckConstraint("amount > 0", name="ck_shared_amount_positive"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), index=True)  # None = quick split
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), index=True
+    )  # None = quick split
     payer_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     amount: Mapped[Decimal] = mapped_column(MONEY)
     description: Mapped[str] = mapped_column(String(256))
     category: Mapped[str] = mapped_column(String(64))
     split_mode: Mapped[str] = mapped_column(String(8))  # equal | exact
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # group expenses: set by settle-up
-    bundle_id: Mapped[str | None] = mapped_column(String(32), index=True)  # bills split together and netted into few payments
+    settled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )  # group expenses: set by settle-up
+    bundle_id: Mapped[str | None] = mapped_column(
+        String(32), index=True
+    )  # bills split together and netted into few payments
 
 
 class Share(Base):
     """One person's part of a shared expense. `expense_id` is set once it was recorded in their own tracker."""
 
     __tablename__ = "shares"
-    __table_args__ = (UniqueConstraint("shared_expense_id", "user_id", name="uq_share_once"),)
+    __table_args__ = (
+        UniqueConstraint("shared_expense_id", "user_id", name="uq_share_once"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    shared_expense_id: Mapped[int] = mapped_column(ForeignKey("shared_expenses.id", ondelete="CASCADE"), index=True)
+    shared_expense_id: Mapped[int] = mapped_column(
+        ForeignKey("shared_expenses.id", ondelete="CASCADE"), index=True
+    )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     amount: Mapped[Decimal] = mapped_column(MONEY)
-    expense_id: Mapped[int | None] = mapped_column(ForeignKey("expenses.id", ondelete="SET NULL"))
+    expense_id: Mapped[int | None] = mapped_column(
+        ForeignKey("expenses.id", ondelete="SET NULL")
+    )
 
 
 class Debt(Base):
@@ -185,14 +243,28 @@ class Debt(Base):
     description: Mapped[str] = mapped_column(String(256))
     kind: Mapped[str] = mapped_column(String(8))  # quick | group | bundle
     bundle_id: Mapped[str | None] = mapped_column(String(32), index=True)
-    shared_expense_id: Mapped[int | None] = mapped_column(ForeignKey("shared_expenses.id", ondelete="CASCADE"))
-    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"))
-    detail: Mapped[str | None] = mapped_column(String(500))  # the bills behind the amount, shown in every message about it
-    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending|claimed|settled|cancelled
-    expense_ids: Mapped[list] = mapped_column(JSONB, default=list)  # debtor's expenses logged when they claimed
-    debtor_msg_id: Mapped[int | None] = mapped_column(BigInteger)  # last notification, so it can disappear
+    shared_expense_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shared_expenses.id", ondelete="CASCADE")
+    )
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE")
+    )
+    detail: Mapped[str | None] = mapped_column(
+        String(500)
+    )  # the bills behind the amount, shown in every message about it
+    status: Mapped[str] = mapped_column(
+        String(10), default="pending"
+    )  # pending|claimed|settled|cancelled
+    expense_ids: Mapped[list] = mapped_column(
+        JSONB, default=list
+    )  # debtor's expenses logged when they claimed
+    debtor_msg_id: Mapped[int | None] = mapped_column(
+        BigInteger
+    )  # last notification, so it can disappear
     creditor_msg_id: Mapped[int | None] = mapped_column(BigInteger)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -216,16 +288,24 @@ class Outbox(Base):
     telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     text: Mapped[str | None] = mapped_column(String(4096))
     buttons: Mapped[list | None] = mapped_column(JSONB)  # [[{"label","data"|"url"}]]
-    message_id: Mapped[int | None] = mapped_column(BigInteger)  # for kind='delete', and the id Telegram gave a sent message
+    message_id: Mapped[int | None] = mapped_column(
+        BigInteger
+    )  # for kind='delete', and the id Telegram gave a sent message
     ref_table: Mapped[str | None] = mapped_column(String(32))
     ref_id: Mapped[int | None] = mapped_column()
     ref_field: Mapped[str | None] = mapped_column(String(32))
-    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending | leased | sent | failed | blocked
+    status: Mapped[str] = mapped_column(
+        String(10), default="pending"
+    )  # pending | leased | sent | failed | blocked
     attempts: Mapped[int] = mapped_column(default=0)
-    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     leased_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(String(200))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class AuditLog(Base):
@@ -234,11 +314,19 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
-    subject: Mapped[str] = mapped_column(String(64), index=True)  # 'user:12' or 'client:telegram-bot'
-    actor: Mapped[str | None] = mapped_column(String(64))  # the client acting for the user (token 'act' claim)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    subject: Mapped[str] = mapped_column(
+        String(64), index=True
+    )  # 'user:12' or 'client:telegram-bot'
+    actor: Mapped[str | None] = mapped_column(
+        String(64)
+    )  # the client acting for the user (token 'act' claim)
     action: Mapped[str] = mapped_column(String(64))  # tool name or auth event
-    outcome: Mapped[str] = mapped_column(String(16))  # ok | input_required | error | denied | rate_limited
+    outcome: Mapped[str] = mapped_column(
+        String(16)
+    )  # ok | input_required | error | denied | rate_limited
     detail: Mapped[str | None] = mapped_column(String(200))
 
 
@@ -249,7 +337,9 @@ class RevokedToken(Base):
 
     jti: Mapped[str] = mapped_column(String(64), primary_key=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    revoked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class IdempotencyRecord(Base):
@@ -263,4 +353,6 @@ class IdempotencyRecord(Base):
     key: Mapped[str] = mapped_column(String(100))
     tool: Mapped[str] = mapped_column(String(64))
     result: Mapped[dict] = mapped_column(JSONB)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )

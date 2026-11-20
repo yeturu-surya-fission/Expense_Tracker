@@ -1,4 +1,5 @@
 """The Telegram handlers end to end: fake Telegram on one side, the real MCP server (in-process) on the other."""
+
 from types import SimpleNamespace
 
 import pytest
@@ -11,7 +12,17 @@ from app.bot.handlers import BotHandlers
 from app.config import settings as bot_settings
 from mcp_server.config import settings as server_settings
 from tests.bot.conftest import ScriptedLLM, tool_call
-from tests.bot.fakes import (FakeBot, FakeMessage, FakeQuery, buttons, context, group_chat, private_chat, tg_user, update)
+from tests.bot.fakes import (
+    FakeBot,
+    FakeMessage,
+    FakeQuery,
+    buttons,
+    context,
+    group_chat,
+    private_chat,
+    tg_user,
+    update,
+)
 from tests.harness import new_telegram_id
 
 
@@ -23,8 +34,13 @@ def bot_username(monkeypatch):
 @pytest.fixture
 def make_handlers(gateway, tool_defs):
     def _make(*script) -> BotHandlers:
-        runner = AgentRunner(build_graph(ScriptedLLM(script=list(script)), gateway, tool_defs, MemorySaver()))
+        runner = AgentRunner(
+            build_graph(
+                ScriptedLLM(script=list(script)), gateway, tool_defs, MemorySaver()
+            )
+        )
         return BotHandlers(runner, ScriptedLLM(), gateway)
+
     return _make
 
 
@@ -48,7 +64,20 @@ def tap(handlers, bot, user, message, data):
 
 # ------------------------------------------------------------------ private chat
 async def test_text_expense_and_undo_button(make_handlers):
-    h, bot, tid = make_handlers(tool_call("add_expenses", {"items": [{"amount": 300, "category": "food", "description": "ice cream"}]})), FakeBot(), new_telegram_id()
+    h, bot, tid = (
+        make_handlers(
+            tool_call(
+                "add_expenses",
+                {
+                    "items": [
+                        {"amount": 300, "category": "food", "description": "ice cream"}
+                    ]
+                },
+            )
+        ),
+        FakeBot(),
+        new_telegram_id(),
+    )
     user, msg = private_msg(tid, "spent 300 on ice cream")
     await h.on_text(update(user, msg), context(bot))
     reply = msg.sent[-1]
@@ -69,10 +98,14 @@ async def test_start_shows_help_and_clears_the_old_bottom_menu(make_handlers):
     user, msg = private_msg(new_telegram_id(), "/start")
     await h.start(update(user, msg), context(bot))
     assert "expense tracker" in msg.sent[-1]["text"].lower()
-    assert type(msg.sent[-1]["markup"]).__name__ == "ReplyKeyboardRemove"  # no permanent buttons under the text box
+    assert (
+        type(msg.sent[-1]["markup"]).__name__ == "ReplyKeyboardRemove"
+    )  # no permanent buttons under the text box
 
 
-async def test_strangers_are_turned_away_by_the_servers_allow_list(make_handlers, monkeypatch):
+async def test_strangers_are_turned_away_by_the_servers_allow_list(
+    make_handlers, monkeypatch
+):
     owner = new_telegram_id()
     monkeypatch.setattr(server_settings, "allowed_telegram_ids", str(owner))
     h, bot = make_handlers(), FakeBot()
@@ -84,31 +117,63 @@ async def test_strangers_are_turned_away_by_the_servers_allow_list(make_handlers
 async def test_invite_link_flow(make_handlers, harness, gateway):
     h, bot = make_handlers(), FakeBot()
     inviter_user, inv_msg = private_msg(new_telegram_id(), "/start", "Inviter")
-    await h.start(update(inviter_user, inv_msg), context(bot))  # the inviter has used the bot
+    await h.start(
+        update(inviter_user, inv_msg), context(bot)
+    )  # the inviter has used the bot
     link = (await h.call(h.private(inviter_user), "ui_view", view="invite")).text
     assert f"inv_{inviter_user.id}" in link
     new_user, msg = private_msg(new_telegram_id(), "/start", "Newcomer")
     await h.start(update(new_user, msg), context(bot, [f"inv_{inviter_user.id}"]))
     assert any("friends with Inviter" in s["text"] for s in msg.sent)
     await deliver_all(gateway, bot)
-    assert any(m["chat_id"] == inviter_user.id and "joined your friends" in m["text"] for m in bot.sent)
+    assert any(
+        m["chat_id"] == inviter_user.id and "joined your friends" in m["text"]
+        for m in bot.sent
+    )
     bad_user, bad = private_msg(new_telegram_id(), "/start")
     await h.start(update(bad_user, bad), context(bot, ["inv_notanumber"]))
     assert "isn't valid" in bad.sent[-1]["text"]
 
 
 async def test_menu_commands_and_month_navigation(make_handlers):
-    h, bot = make_handlers(tool_call("add_expenses", {"items": [{"amount": 120, "category": "food", "description": "lunch"}]})), FakeBot()
+    h, bot = (
+        make_handlers(
+            tool_call(
+                "add_expenses",
+                {
+                    "items": [
+                        {"amount": 120, "category": "food", "description": "lunch"}
+                    ]
+                },
+            )
+        ),
+        FakeBot(),
+    )
     user, msg = private_msg(new_telegram_id(), "lunch 120")
     await h.on_text(update(user, msg), context(bot))
-    for text in ("/summary", "/history", "/recent", "/budgets", "/friends", "/dues", "/daily", "/trend", "/invite", "/undo"):
+    for text in (
+        "/summary",
+        "/history",
+        "/recent",
+        "/budgets",
+        "/friends",
+        "/dues",
+        "/daily",
+        "/trend",
+        "/invite",
+        "/undo",
+    ):
         _, m = private_msg(user.id, text)
         m.from_user = user
         await h.on_command(update(user, m), context(bot))
         assert m.sent and m.sent[-1]["text"], text
     _, summary = private_msg(user.id, "/summary")
     await h.on_command(update(user, summary), context(bot))
-    nav = [b for b in buttons(summary.sent[-1]["markup"]) if b[1] and b[1].startswith("sum:")]
+    nav = [
+        b
+        for b in buttons(summary.sent[-1]["markup"])
+        if b[1] and b[1].startswith("sum:")
+    ]
     assert nav
     shown = FakeMessage("x", summary.chat)
     q, coro = tap(h, bot, user, shown, "sum:last_month")
@@ -120,11 +185,21 @@ async def test_split_and_payment_lifecycle_through_telegram(make_handlers, gatew
     """Kiran splits a bill; Surya gets his bill in his chat, taps I paid; Kiran confirms - all via the bot, MCP and the outbox."""
     bot = FakeBot()
     surya_tid, kiran_tid = new_telegram_id(), new_telegram_id()
-    h = make_handlers(tool_call("split_expense", {"amount": 900, "description": "dinner", "with_friends": ["Surya"]}))
+    h = make_handlers(
+        tool_call(
+            "split_expense",
+            {"amount": 900, "description": "dinner", "with_friends": ["Surya"]},
+        )
+    )
     surya = tg_user(surya_tid, "Surya")
-    await h.start(update(surya, FakeMessage("/start", private_chat(surya_tid), surya)), context(bot))  # Surya pressed Start
+    await h.start(
+        update(surya, FakeMessage("/start", private_chat(surya_tid), surya)),
+        context(bot),
+    )  # Surya pressed Start
     kiran, _ = private_msg(kiran_tid, "")
-    await h.call(h.private(kiran), "add_friend", nickname="Surya", telegram_id=surya_tid)
+    await h.call(
+        h.private(kiran), "add_friend", nickname="Surya", telegram_id=surya_tid
+    )
 
     msg = FakeMessage("dinner 900 split with Surya", private_chat(kiran_tid), kiran)
     await h.on_text(update(kiran, msg), context(bot))
@@ -136,7 +211,11 @@ async def test_split_and_payment_lifecycle_through_telegram(make_handlers, gatew
     assert q.markup_cleared  # one-shot buttons
 
     assert await deliver_all(gateway, bot) >= 1
-    bill = [m for m in bot.sent if m["chat_id"] == surya_tid and "Your share: ₹450" in m["text"]][0]
+    bill = [
+        m
+        for m in bot.sent
+        if m["chat_id"] == surya_tid and "Your share: ₹450" in m["text"]
+    ][0]
     paid_btn = buttons(bill["markup"])[0]
     assert paid_btn[0] == "✅ I paid"
 
@@ -144,16 +223,25 @@ async def test_split_and_payment_lifecycle_through_telegram(make_handlers, gatew
     bill_msg.chat.send_message = lambda text, **kw: _record(bill_msg, text)
     q, coro = tap(h, bot, surya, bill_msg, paid_btn[1])
     await coro
-    assert bill_msg.deleted and any("you paid Kiran ₹450" in t for t in bill_msg.chat_sent)
+    assert bill_msg.deleted and any(
+        "you paid Kiran ₹450" in t for t in bill_msg.chat_sent
+    )
 
     await deliver_all(gateway, bot)
-    claim = [m for m in bot.sent if m["chat_id"] == kiran_tid and "says they paid you" in m["text"]][0]
+    claim = [
+        m
+        for m in bot.sent
+        if m["chat_id"] == kiran_tid and "says they paid you" in m["text"]
+    ][0]
     got = [b for b in buttons(claim["markup"]) if b[0] == "✅ Received"][0]
     q, coro = tap(h, bot, kiran, FakeMessage(claim["text"], msg.chat), got[1])
     await coro
     assert "All settled" in q.edited[-1]["text"]
     await deliver_all(gateway, bot)
-    assert any(m["chat_id"] == surya_tid and "confirmed your payment" in m["text"] for m in bot.sent)
+    assert any(
+        m["chat_id"] == surya_tid and "confirmed your payment" in m["text"]
+        for m in bot.sent
+    )
 
 
 async def _record(msg, text):
@@ -168,31 +256,59 @@ def mention(text, bot_username="expense_test_bot"):
 
 
 async def test_group_setup_when_the_bot_is_added(make_handlers, gateway):
-    h, chat = make_handlers(), group_chat(-7_000_000 - new_telegram_id() % 10**6, "Goa Trip")
+    h, chat = (
+        make_handlers(),
+        group_chat(-7_000_000 - new_telegram_id() % 10**6, "Goa Trip"),
+    )
     adder, pal = tg_user(new_telegram_id(), "Adder"), new_telegram_id()
     await h.call(h.private(adder), "add_friend", nickname="Pal", telegram_id=pal)
     bot = FakeBot(chat_members={(chat.id, pal): "member"})
-    change = SimpleNamespace(chat=chat, from_user=adder, new_chat_member=SimpleNamespace(status="member"), old_chat_member=SimpleNamespace(status="left"))
+    change = SimpleNamespace(
+        chat=chat,
+        from_user=adder,
+        new_chat_member=SimpleNamespace(status="member"),
+        old_chat_member=SimpleNamespace(status="left"),
+    )
     await h.on_bot_membership(SimpleNamespace(my_chat_member=change), context(bot))
     welcome = bot.sent[-1]
-    assert welcome["chat_id"] == chat.id and "Goa Trip" in welcome["text"] and "Adder" in welcome["text"] and f"user {pal}" in welcome["text"]  # the friend's own name is unknown until they speak
+    assert (
+        welcome["chat_id"] == chat.id
+        and "Goa Trip" in welcome["text"]
+        and "Adder" in welcome["text"]
+        and f"user {pal}" in welcome["text"]
+    )  # the friend's own name is unknown until they speak
     assert buttons(welcome["markup"])[0][2] == "https://t.me/expense_test_bot"
     n = len(bot.sent)
-    await h.on_bot_membership(SimpleNamespace(my_chat_member=change), context(bot))  # added again: already set up, stay quiet
+    await h.on_bot_membership(
+        SimpleNamespace(my_chat_member=change), context(bot)
+    )  # added again: already set up, stay quiet
     assert len(bot.sent) == n
 
 
 async def test_bot_added_by_a_stranger_leaves(make_handlers, monkeypatch):
     owner = new_telegram_id()
     monkeypatch.setattr(server_settings, "allowed_telegram_ids", str(owner))
-    h, chat, bot = make_handlers(), group_chat(-8_000_000 - new_telegram_id() % 10**6), FakeBot()
-    change = SimpleNamespace(chat=chat, from_user=tg_user(new_telegram_id(), "Stranger"),
-                             new_chat_member=SimpleNamespace(status="member"), old_chat_member=SimpleNamespace(status="left"))
+    h, chat, bot = (
+        make_handlers(),
+        group_chat(-8_000_000 - new_telegram_id() % 10**6),
+        FakeBot(),
+    )
+    change = SimpleNamespace(
+        chat=chat,
+        from_user=tg_user(new_telegram_id(), "Stranger"),
+        new_chat_member=SimpleNamespace(status="member"),
+        old_chat_member=SimpleNamespace(status="left"),
+    )
     await h.on_bot_membership(SimpleNamespace(my_chat_member=change), context(bot))
-    assert bot.left == [chat.id] and "only be added to groups by my owner" in bot.sent[-1]["text"]
+    assert (
+        bot.left == [chat.id]
+        and "only be added to groups by my owner" in bot.sent[-1]["text"]
+    )
 
 
-async def test_group_mention_question_and_settle_with_start_tagging(make_handlers, gateway):
+async def test_group_mention_question_and_settle_with_start_tagging(
+    make_handlers, gateway
+):
     chat = group_chat(-9_000_000 - new_telegram_id() % 10**6, "Hampi")
     ana_tid, ghost_tid = new_telegram_id(), new_telegram_id()
     ana = tg_user(ana_tid, "Ana")
@@ -201,10 +317,29 @@ async def test_group_mention_question_and_settle_with_start_tagging(make_handler
         tool_call("add_group_expense", {"amount": 600, "description": "stay"}),
         tool_call("settle_group", {}),
     )
-    await h.start(update(ana, FakeMessage("/start", private_chat(ana_tid), ana)), context(bot))  # Ana pressed Start
-    adder_change = SimpleNamespace(chat=chat, from_user=ana, new_chat_member=SimpleNamespace(status="member"), old_chat_member=SimpleNamespace(status="left"))
-    await h.on_bot_membership(SimpleNamespace(my_chat_member=adder_change), context(bot))
-    joined = SimpleNamespace(effective_message=FakeMessage("", chat, None, new_chat_members=[tg_user(ghost_tid, "Ghost"), tg_user(5, "SomeBot", is_bot=True)]))
+    await h.start(
+        update(ana, FakeMessage("/start", private_chat(ana_tid), ana)), context(bot)
+    )  # Ana pressed Start
+    adder_change = SimpleNamespace(
+        chat=chat,
+        from_user=ana,
+        new_chat_member=SimpleNamespace(status="member"),
+        old_chat_member=SimpleNamespace(status="left"),
+    )
+    await h.on_bot_membership(
+        SimpleNamespace(my_chat_member=adder_change), context(bot)
+    )
+    joined = SimpleNamespace(
+        effective_message=FakeMessage(
+            "",
+            chat,
+            None,
+            new_chat_members=[
+                tg_user(ghost_tid, "Ghost"),
+                tg_user(5, "SomeBot", is_bot=True),
+            ],
+        )
+    )
     await h.on_new_members(joined, context(bot))
 
     text, entities = mention("I paid 600 for stay")
@@ -212,10 +347,20 @@ async def test_group_mention_question_and_settle_with_start_tagging(make_handler
     await h.on_group_text(update(ana, msg), context(bot))
     ask = msg.sent[-1]
     assert "How should I split" in ask["text"]
-    assert all(b[1].endswith(f":{ana_tid}") for b in buttons(ask["markup"]))  # only the asker may answer
-    q_other, coro = tap(h, bot, tg_user(new_telegram_id(), "Intruder"), FakeMessage("q", chat), f"hitl:equal:{ana_tid}")
+    assert all(
+        b[1].endswith(f":{ana_tid}") for b in buttons(ask["markup"])
+    )  # only the asker may answer
+    q_other, coro = tap(
+        h,
+        bot,
+        tg_user(new_telegram_id(), "Intruder"),
+        FakeMessage("q", chat),
+        f"hitl:equal:{ana_tid}",
+    )
     await coro
-    assert q_other.alerts and "someone else" in q_other.alerts[0]  # blocked before it reaches the server (or: not allowed)
+    assert (
+        q_other.alerts and "someone else" in q_other.alerts[0]
+    )  # blocked before it reaches the server (or: not allowed)
     q, coro = tap(h, bot, ana, FakeMessage(ask["text"], chat), f"hitl:equal:{ana_tid}")
     await coro
 
@@ -229,16 +374,25 @@ async def test_group_mention_question_and_settle_with_start_tagging(make_handler
     await coro
     posted = q.message.sent
     assert any("Hampi settled" in s["text"] for s in posted)
-    tag = [s for s in posted if "press Start" in s["text"] or "Press Start" in s["text"]]
+    tag = [
+        s for s in posted if "press Start" in s["text"] or "Press Start" in s["text"]
+    ]
     assert tag and f"tg://user?id={ghost_tid}" in tag[0]["text"]
-    assert buttons(tag[0]["markup"])[0][2].startswith("https://t.me/expense_test_bot?start=join_")
+    assert buttons(tag[0]["markup"])[0][2].startswith(
+        "https://t.me/expense_test_bot?start=join_"
+    )
 
 
 async def test_group_commands_and_silence_without_a_mention(make_handlers):
     chat = group_chat(-9_500_000 - new_telegram_id() % 10**6, "Flat")
     ana = tg_user(new_telegram_id(), "Ana")
     h, bot = make_handlers(), FakeBot()
-    setup = SimpleNamespace(chat=chat, from_user=ana, new_chat_member=SimpleNamespace(status="member"), old_chat_member=SimpleNamespace(status="left"))
+    setup = SimpleNamespace(
+        chat=chat,
+        from_user=ana,
+        new_chat_member=SimpleNamespace(status="member"),
+        old_chat_member=SimpleNamespace(status="left"),
+    )
     await h.on_bot_membership(SimpleNamespace(my_chat_member=setup), context(bot))
     chatter = FakeMessage("anyone free for dinner?", chat, ana)
     await h.on_group_text(update(ana, chatter), context(bot))
@@ -254,7 +408,9 @@ async def test_group_commands_and_silence_without_a_mention(make_handlers):
     assert "Nothing to settle" in cmd2.sent[-1]["text"]
 
 
-async def test_unknown_chat_and_stranger_in_group_stay_silent(make_handlers, monkeypatch):
+async def test_unknown_chat_and_stranger_in_group_stay_silent(
+    make_handlers, monkeypatch
+):
     owner = new_telegram_id()
     monkeypatch.setattr(server_settings, "allowed_telegram_ids", str(owner))
     chat = group_chat(-9_700_000 - new_telegram_id() % 10**6, "Nobody set me up")
@@ -267,7 +423,9 @@ async def test_unknown_chat_and_stranger_in_group_stay_silent(make_handlers, mon
 
 
 # ------------------------------------------------------------------ the messages the server queues
-async def test_outbox_delivery_updates_the_server_and_blocked_people_wait(make_handlers, gateway, harness):
+async def test_outbox_delivery_updates_the_server_and_blocked_people_wait(
+    make_handlers, gateway, harness
+):
     bot = FakeBot()
     h = make_handlers()
     owner = await harness.person("Owner")
@@ -275,24 +433,48 @@ async def test_outbox_delivery_updates_the_server_and_blocked_people_wait(make_h
     await owner.ok("add_friend", nickname="Friend", telegram_id=friend.telegram_id)
     await deliver_all(gateway, bot)  # start from an empty queue
     bot.sent.clear()
-    await owner.ok("split_expense", amount=200, description="chai", with_friends=["Friend"], split="equal")
+    await owner.ok(
+        "split_expense",
+        amount=200,
+        description="chai",
+        with_friends=["Friend"],
+        split="equal",
+    )
     bot.blocked.add(friend.telegram_id)  # they blocked the bot meanwhile
     await deliver_all(gateway, bot)
     assert not [m for m in bot.sent if m["chat_id"] == friend.telegram_id]
     bot.blocked.clear()
-    await harness.person("Friend", telegram_id=friend.telegram_id, started=True)  # pressed Start again
+    await harness.person(
+        "Friend", telegram_id=friend.telegram_id, started=True
+    )  # pressed Start again
     await deliver_all(gateway, bot)
-    assert [m for m in bot.sent if m["chat_id"] == friend.telegram_id and "Your share" in m["text"]]
+    assert [
+        m
+        for m in bot.sent
+        if m["chat_id"] == friend.telegram_id and "Your share" in m["text"]
+    ]
 
 
-async def test_a_message_that_was_replaced_is_deleted_from_the_chat(make_handlers, gateway, harness):
+async def test_a_message_that_was_replaced_is_deleted_from_the_chat(
+    make_handlers, gateway, harness
+):
     bot = FakeBot()
     owner, friend = await harness.person("Owner"), await harness.person("Friend")
     await owner.ok("add_friend", nickname="Friend", telegram_id=friend.telegram_id)
     await deliver_all(gateway, bot)
-    r = await owner.ok("split_expense", amount=200, description="chai", with_friends=["Friend"], split="equal")
+    r = await owner.ok(
+        "split_expense",
+        amount=200,
+        description="chai",
+        with_friends=["Friend"],
+        split="equal",
+    )
     await deliver_all(gateway, bot)
-    sent_id = [m["message_id"] for m in bot.sent if m["chat_id"] == friend.telegram_id and "chai" in m["text"]][-1]
+    sent_id = [
+        m["message_id"]
+        for m in bot.sent
+        if m["chat_id"] == friend.telegram_id and "chai" in m["text"]
+    ][-1]
     await owner.ok("cancel_split", split_id=r["data"]["split_ids"][0])
     await deliver_all(gateway, bot)
     assert (friend.telegram_id, sent_id) in bot.deleted
@@ -301,29 +483,56 @@ async def test_a_message_that_was_replaced_is_deleted_from_the_chat(make_handler
 async def test_dues_screen_has_pay_buttons_and_updates_in_place(make_handlers, gateway):
     bot = FakeBot()
     h = make_handlers()
-    kiran, surya = tg_user(new_telegram_id(), "Kiran"), tg_user(new_telegram_id(), "Surya")
+    kiran, surya = (
+        tg_user(new_telegram_id(), "Kiran"),
+        tg_user(new_telegram_id(), "Surya"),
+    )
     for u in (kiran, surya):
-        await h.start(update(u, FakeMessage("/start", private_chat(u.id), u)), context(bot))
+        await h.start(
+            update(u, FakeMessage("/start", private_chat(u.id), u)), context(bot)
+        )
     await h.call(h.private(kiran), "add_friend", nickname="Surya", telegram_id=surya.id)
     for what, amount in (("tea", 100), ("pizza", 600)):
-        await h.call(h.private(kiran), "split_expense", amount=amount, description=what, with_friends=["Surya"], split="equal")
+        await h.call(
+            h.private(kiran),
+            "split_expense",
+            amount=amount,
+            description=what,
+            with_friends=["Surya"],
+            split="equal",
+        )
 
     msg = FakeMessage("/dues", private_chat(surya.id), surya)
     await h.on_command(update(surya, msg), context(bot))
     shown = msg.sent[-1]
-    assert shown["text"].count("Kiran") == 1 and "₹350" in shown["text"] and "tea" not in shown["text"]
+    assert (
+        shown["text"].count("Kiran") == 1
+        and "₹350" in shown["text"]
+        and "tea" not in shown["text"]
+    )
     pay = [b for b in buttons(shown["markup"]) if b[0].startswith("✅ I paid Kiran")][0]
     assert pay[0] == "✅ I paid Kiran ₹350" and pay[1].startswith("payto:")
 
     q, coro = tap(h, bot, surya, FakeMessage(shown["text"], msg.chat), pay[1])
     await coro
-    assert "you paid Kiran ₹350" in q.edited[-1]["text"] and "waiting for them to confirm" in q.edited[-1]["text"]
-    assert not [b for b in buttons(q.edited[-1]["markup"]) if "I paid" in b[0]]  # nothing left to pay
+    assert (
+        "you paid Kiran ₹350" in q.edited[-1]["text"]
+        and "waiting for them to confirm" in q.edited[-1]["text"]
+    )
+    assert not [
+        b for b in buttons(q.edited[-1]["markup"]) if "I paid" in b[0]
+    ]  # nothing left to pay
 
     await deliver_all(gateway, bot)
-    claim = [m for m in bot.sent if m["chat_id"] == kiran.id and "says they paid you" in m["text"]][0]
+    claim = [
+        m
+        for m in bot.sent
+        if m["chat_id"] == kiran.id and "says they paid you" in m["text"]
+    ][0]
     got = [b for b in buttons(claim["markup"]) if b[0] == "✅ Received"][0]
-    q, coro = tap(h, bot, kiran, FakeMessage(claim["text"], private_chat(kiran.id)), got[1])
+    q, coro = tap(
+        h, bot, kiran, FakeMessage(claim["text"], private_chat(kiran.id)), got[1]
+    )
     await coro
     assert "All settled" in q.edited[-1]["text"]
 
@@ -334,16 +543,36 @@ async def test_reimburse_screen_and_buttons_before_joining_a_company(make_handle
     user, msg = private_msg(new_telegram_id(), "/reimburse")
     await h.on_command(update(user, msg), context(bot))
     shown = msg.sent[-1]
-    assert "haven't joined a company" in shown["text"] and "kept apart from your personal spending" in shown["text"]
-    assert [b[1] for b in buttons(shown["markup"])] == ["rb:add", "rb:claims", "rb:ask"]  # nothing to send yet
+    assert (
+        "haven't joined a company" in shown["text"]
+        and "kept apart from your personal spending" in shown["text"]
+    )
+    assert [b[1] for b in buttons(shown["markup"])] == [
+        "rb:add",
+        "rb:claims",
+        "rb:ask",
+    ]  # nothing to send yet
 
-    await h.call(h.private(user), "add_work_expense", items=[{"amount": 450, "category": "cab", "description": "cab to client"}])
+    await h.call(
+        h.private(user),
+        "add_work_expense",
+        items=[{"amount": 450, "category": "cab", "description": "cab to client"}],
+    )
     again = FakeMessage("/reimburse", msg.chat, user)
     await h.on_command(update(user, again), context(bot))
-    assert "rb:send" in [b[1] for b in buttons(again.sent[-1]["markup"])] and "₹450" in again.sent[-1]["text"]
+    assert (
+        "rb:send" in [b[1] for b in buttons(again.sent[-1]["markup"])]
+        and "₹450" in again.sent[-1]["text"]
+    )
 
     shown_msg = FakeMessage("x", msg.chat)
-    for data, expect in (("rb:add", "work expense"), ("rb:ask", "policy"), ("rb:claims", "haven't sent any claims"), ("rb:send", "joined a company"), ("rb:yes", "joined a company")):
+    for data, expect in (
+        ("rb:add", "work expense"),
+        ("rb:ask", "policy"),
+        ("rb:claims", "haven't sent any claims"),
+        ("rb:send", "joined a company"),
+        ("rb:yes", "joined a company"),
+    ):
         q, coro = tap(h, bot, user, shown_msg, data)
         await coro
         assert expect in shown_msg.sent[-1]["text"], data
@@ -351,6 +580,7 @@ async def test_reimburse_screen_and_buttons_before_joining_a_company(make_handle
 
 async def test_reimburse_is_in_the_command_menu():
     from app.bot.app import COMMANDS
+
     assert "reimburse" in [c.command for c in COMMANDS]
 
 
@@ -366,17 +596,32 @@ async def test_employee_reimbursement_commands_go_straight_to_the_tools(make_han
     assert "/join FIN-7K2QP" in await run("/join", [])  # no code: tells how
     assert "joined a company" not in await run("/join", [])
     assert "haven't sent any claims" in await run("/claims", [])
-    assert "Ask me anything about your company's reimbursement policy" in await run("/policy", [])
-    assert "joined a company" in await run("/policy", ["will", "I", "get", "a", "refund?"])  # not in a company yet: the tool says so
+    assert "Ask me anything about your company's reimbursement policy" in await run(
+        "/policy", []
+    )
+    assert "joined a company" in await run(
+        "/policy", ["will", "I", "get", "a", "refund?"]
+    )  # not in a company yet: the tool says so
     for name in ("join", "claims", "policy"):
         from app.bot.app import COMMANDS
+
         assert name in [c.command for c in COMMANDS]
 
 
 async def test_work_and_personal_commands_keep_the_two_kinds_apart(make_handlers):
     h = make_handlers(
-        tool_call("add_work_expense", {"items": [{"amount": 450, "category": "cab", "description": "cab to client"}]}),
-        tool_call("add_expenses", {"items": [{"amount": 250, "category": "food", "description": "lunch"}]}),
+        tool_call(
+            "add_work_expense",
+            {
+                "items": [
+                    {"amount": 450, "category": "cab", "description": "cab to client"}
+                ]
+            },
+        ),
+        tool_call(
+            "add_expenses",
+            {"items": [{"amount": 250, "category": "food", "description": "lunch"}]},
+        ),
     )
     bot, user = FakeBot(), tg_user(new_telegram_id(), "Kiran")
     asked = []
@@ -385,24 +630,40 @@ async def test_work_and_personal_commands_keep_the_two_kinds_apart(make_handlers
     async def spy(tg, chat, text, **kw):
         asked.append(text)
         return await real_ask(tg, chat, text, **kw)
+
     h._ask = spy
 
     work = FakeMessage("/work cab 450 to client", private_chat(user.id), user)
-    await h.on_kind_command(update(user, work), context(bot, args=["cab", "450", "to", "client"]))
-    assert asked[-1].startswith("WORK expense") and "cab 450 to client" in asked[-1] and "₹450" in work.sent[-1]["text"]
+    await h.on_kind_command(
+        update(user, work), context(bot, args=["cab", "450", "to", "client"])
+    )
+    assert (
+        asked[-1].startswith("WORK expense")
+        and "cab 450 to client" in asked[-1]
+        and "₹450" in work.sent[-1]["text"]
+    )
 
     personal = FakeMessage("/personal lunch 250", private_chat(user.id), user)
     await h.on_kind_command(update(user, personal), context(bot, args=["lunch", "250"]))
-    assert asked[-1].startswith("PERSONAL expense") and "add_work_expense" in asked[-1] and "₹250" in personal.sent[-1]["text"]
+    assert (
+        asked[-1].startswith("PERSONAL expense")
+        and "add_work_expense" in asked[-1]
+        and "₹250" in personal.sent[-1]["text"]
+    )
 
-    bare = FakeMessage("/personal", private_chat(user.id), user)  # no text: says how, asks nothing
+    bare = FakeMessage(
+        "/personal", private_chat(user.id), user
+    )  # no text: says how, asks nothing
     await h.on_kind_command(update(user, bare), context(bot, args=[]))
     assert "/personal lunch 250" in bare.sent[-1]["text"] and len(asked) == 2
-    screen = FakeMessage("/work", private_chat(user.id), user)  # no text: the work screen
+    screen = FakeMessage(
+        "/work", private_chat(user.id), user
+    )  # no text: the work screen
     await h.on_kind_command(update(user, screen), context(bot, args=[]))
     assert "kept apart from your personal spending" in screen.sent[-1]["text"]
 
     from app.bot.app import COMMANDS
+
     assert {"work", "personal"} <= {c.command for c in COMMANDS}
 
 
@@ -415,21 +676,48 @@ async def test_workpdf_sends_a_pdf_of_the_work_expenses(make_handlers):
         await h.on_command(update(user, msg), context(bot))
         return msg.sent[-1]
 
-    assert "haven't logged any work expenses" in (await run())["text"]  # nothing yet: no empty PDF
-    await h.call(h.private(user), "add_work_expense", items=[
-        {"amount": 450, "category": "cab", "description": "cab to client", "has_receipt": True},
-        {"amount": 15000, "category": "hotel", "description": "Pune hotel ₹ stay", "nights": 2},
-    ])
+    assert (
+        "haven't logged any work expenses" in (await run())["text"]
+    )  # nothing yet: no empty PDF
+    await h.call(
+        h.private(user),
+        "add_work_expense",
+        items=[
+            {
+                "amount": 450,
+                "category": "cab",
+                "description": "cab to client",
+                "has_receipt": True,
+            },
+            {
+                "amount": 15000,
+                "category": "hotel",
+                "description": "Pune hotel ₹ stay",
+                "nights": 2,
+            },
+        ],
+    )
     sent = await run()
-    assert sent["document"].startswith(b"%PDF") and sent["filename"].startswith("work-expenses-") and "2 expense(s)" in sent["text"]
+    assert (
+        sent["document"].startswith(b"%PDF")
+        and sent["filename"].startswith("work-expenses-")
+        and "2 expense(s)" in sent["text"]
+    )
     from app.bot.app import COMMANDS
+
     assert "workpdf" in [c.command for c in COMMANDS]
 
 
 class FakeTgFile:
     """A photo or document as Telegram hands it over: it can be downloaded."""
+
     def __init__(self, data: bytes, file_name=None, mime_type=None):
-        self.data, self.file_name, self.mime_type, self.file_size = data, file_name, mime_type, len(data)
+        self.data, self.file_name, self.mime_type, self.file_size = (
+            data,
+            file_name,
+            mime_type,
+            len(data),
+        )
 
     async def get_file(self):
         outer = self
@@ -437,10 +725,13 @@ class FakeTgFile:
         class Downloaded:
             async def download_as_bytearray(self):
                 return bytearray(outer.data)
+
         return Downloaded()
 
 
-async def test_a_photo_or_pdf_is_the_receipt_of_the_expense_that_is_waiting_for_one(make_handlers):
+async def test_a_photo_or_pdf_is_the_receipt_of_the_expense_that_is_waiting_for_one(
+    make_handlers,
+):
     from mcp_server.db.session import session_scope as mcp_session
 
     h, bot = make_handlers(), FakeBot()
@@ -450,23 +741,48 @@ async def test_a_photo_or_pdf_is_the_receipt_of_the_expense_that_is_waiting_for_
     # nothing is waiting for a receipt: a photo is explained, not silently dropped
     lonely = FakeMessage("", chat, user, photo=[FakeTgFile(b"jpeg bytes")])
     await h.on_other_file(update(user, lonely), context(bot))
-    assert "none of your work expenses is waiting for a receipt" in lonely.sent[-1]["text"]
+    assert (
+        "none of your work expenses is waiting for a receipt" in lonely.sent[-1]["text"]
+    )
 
-    added = await h.call(h.private(user), "add_work_expense", items=[{"amount": 3000, "category": "flight", "description": "flight to Pune"}])
+    added = await h.call(
+        h.private(user),
+        "add_work_expense",
+        items=[{"amount": 3000, "category": "flight", "description": "flight to Pune"}],
+    )
     expense_id = added.data["work_expense_ids"][0]
-    async with mcp_session() as s:  # (the finance agent normally says the policy wants a receipt for this one)
+    async with (
+        mcp_session() as s
+    ):  # (the finance agent normally says the policy wants a receipt for this one)
         (exp,) = await _expenses(s, expense_id)
         exp.needs_receipt = True
 
-    photo = FakeMessage("", chat, user, photo=[FakeTgFile(b"small"), FakeTgFile(b"jpeg bytes of the receipt")])  # the biggest one is last
+    photo = FakeMessage(
+        "",
+        chat,
+        user,
+        photo=[FakeTgFile(b"small"), FakeTgFile(b"jpeg bytes of the receipt")],
+    )  # the biggest one is last
     await h.on_other_file(update(user, photo), context(bot))
-    assert "Receipt saved with" in photo.sent[-1]["text"] and "flight to Pune" in photo.sent[-1]["text"]
+    assert (
+        "Receipt saved with" in photo.sent[-1]["text"]
+        and "flight to Pune" in photo.sent[-1]["text"]
+    )
     async with mcp_session() as s:
         (kept,) = await _receipts(s, expense_id)
-        assert kept.data == b"jpeg bytes of the receipt" and kept.content_type == "image/jpeg"
+        assert (
+            kept.data == b"jpeg bytes of the receipt"
+            and kept.content_type == "image/jpeg"
+        )
 
     # nothing is waiting any more: a PDF goes to the bank-statement import as before
-    pdf = FakeMessage("", chat, user, caption="", document=FakeTgFile(b"%PDF-1.4 not a statement", "stmt.pdf", "application/pdf"))
+    pdf = FakeMessage(
+        "",
+        chat,
+        user,
+        caption="",
+        document=FakeTgFile(b"%PDF-1.4 not a statement", "stmt.pdf", "application/pdf"),
+    )
     await h.on_document(update(user, pdf), context(bot))
     assert "Receipt saved" not in " ".join(m["text"] for m in pdf.sent)
 
@@ -474,10 +790,24 @@ async def test_a_photo_or_pdf_is_the_receipt_of_the_expense_that_is_waiting_for_
 async def _expenses(s, expense_id):
     from sqlalchemy import select
     from mcp_server.reimbursement.models import WorkExpense
-    return list((await s.execute(select(WorkExpense).where(WorkExpense.id == expense_id))).scalars().all())
+
+    return list(
+        (await s.execute(select(WorkExpense).where(WorkExpense.id == expense_id)))
+        .scalars()
+        .all()
+    )
 
 
 async def _receipts(s, expense_id):
     from sqlalchemy import select
     from mcp_server.reimbursement.models import WorkReceipt
-    return list((await s.execute(select(WorkReceipt).where(WorkReceipt.expense_id == expense_id))).scalars().all())
+
+    return list(
+        (
+            await s.execute(
+                select(WorkReceipt).where(WorkReceipt.expense_id == expense_id)
+            )
+        )
+        .scalars()
+        .all()
+    )

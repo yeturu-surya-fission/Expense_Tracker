@@ -4,6 +4,7 @@ keys; we check signature, issuer, audience (that it was meant for US), expiry an
 
 The token says who the employee is (`sub` = 'user:<id>', `name`); we trust that because only the tracker can sign it.
 """
+
 import time
 from typing import Awaitable, Callable
 
@@ -35,7 +36,11 @@ class TokenVerifier:
 
     async def _refresh(self) -> None:
         jwks = await self._provider()
-        self._keys = {k["kid"]: RSAAlgorithm.from_jwk(k) for k in jwks.get("keys", []) if k.get("kty") == "RSA" and k.get("kid")}
+        self._keys = {
+            k["kid"]: RSAAlgorithm.from_jwk(k)
+            for k in jwks.get("keys", [])
+            if k.get("kty") == "RSA" and k.get("kid")
+        }
         self._fetched = time.monotonic()
 
     async def _key(self, kid: str):
@@ -52,24 +57,41 @@ class TokenVerifier:
             if key is None:
                 return None
             claims = jwt.decode(
-                token, key, algorithms=["RS256"], audience=settings.audience, issuer=settings.trusted_issuer.rstrip("/"),
-                leeway=5, options={"require": ["exp", "iat", "iss", "aud", "sub"]},
+                token,
+                key,
+                algorithms=["RS256"],
+                audience=settings.audience,
+                issuer=settings.trusted_issuer.rstrip("/"),
+                leeway=5,
+                options={"require": ["exp", "iat", "iss", "aud", "sub"]},
             )
         except (jwt.PyJWTError, httpx.HTTPError, ValueError, KeyError):
             return None
-        if SCOPE not in str(claims.get("scope", "")).split() or not str(claims.get("sub", "")).startswith("user:"):
+        if SCOPE not in str(claims.get("scope", "")).split() or not str(
+            claims.get("sub", "")
+        ).startswith("user:"):
             return None
         return claims
 
 
 def authenticate_middleware(verifier: TokenVerifier, protected_prefix: str = "/a2a"):
     """HTTP middleware: only the A2A endpoint needs a token (the agent card is public by design)."""
+
     async def middleware(request: Request, call_next):
         if request.url.path.startswith(protected_prefix):
             header = request.headers.get("authorization", "")
-            claims = await verifier.verify(header[7:].strip()) if header.lower().startswith("bearer ") else None
+            claims = (
+                await verifier.verify(header[7:].strip())
+                if header.lower().startswith("bearer ")
+                else None
+            )
             if claims is None:
-                return JSONResponse({"error": "invalid_token"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+                return JSONResponse(
+                    {"error": "invalid_token"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             request.state.claims = claims
         return await call_next(request)
+
     return middleware

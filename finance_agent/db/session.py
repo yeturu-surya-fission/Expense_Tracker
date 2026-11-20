@@ -28,6 +28,14 @@ async def init_db() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             # create_all never alters existing tables: add columns introduced after a database was first created
-            await conn.execute(text("ALTER TABLE claims ADD COLUMN IF NOT EXISTS external_no INTEGER"))
-            await conn.execute(text("ALTER TABLE claims ADD COLUMN IF NOT EXISTS decided_items JSONB"))
-            await conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS claim_id INTEGER"))
+            await conn.execute(
+                text("ALTER TABLE claims ADD COLUMN IF NOT EXISTS external_no INTEGER")
+            )
+            await conn.execute(
+                text("ALTER TABLE claims ADD COLUMN IF NOT EXISTS decided_items JSONB")
+            )
+            await conn.execute(
+                text(
+                    "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS claim_id INTEGER"
+                )
+            )

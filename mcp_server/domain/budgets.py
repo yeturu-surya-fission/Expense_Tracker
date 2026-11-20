@@ -1,4 +1,5 @@
 """Monthly per-category limits and the 50% / 80% / 100% alerts."""
+
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -29,11 +30,17 @@ class BudgetStatus:
         return int(self.spent * 100 / self.limit) if self.limit else 0
 
     def line(self) -> str:
-        left = f"{money(self.remaining)} left" if self.remaining >= 0 else f"over by {money(-self.remaining)}"
+        left = (
+            f"{money(self.remaining)} left"
+            if self.remaining >= 0
+            else f"over by {money(-self.remaining)}"
+        )
         return f"{status_dot(self.percent)} {self.category}: {bar(self.percent)} {self.percent}% · {money(self.spent)} of {money(self.limit)} · {left}"
 
 
-async def category_spent(session: AsyncSession, user_id: int, category: str, period: Period | None = None) -> Decimal:
+async def category_spent(
+    session: AsyncSession, user_id: int, category: str, period: Period | None = None
+) -> Decimal:
     p = period or current_month()
     total = (
         await session.execute(
@@ -49,13 +56,19 @@ async def category_spent(session: AsyncSession, user_id: int, category: str, per
     return Decimal(total)
 
 
-async def _get_budget(session: AsyncSession, user_id: int, category: str) -> Budget | None:
+async def _get_budget(
+    session: AsyncSession, user_id: int, category: str
+) -> Budget | None:
     return (
-        await session.execute(select(Budget).where(Budget.user_id == user_id, Budget.category == category))
+        await session.execute(
+            select(Budget).where(Budget.user_id == user_id, Budget.category == category)
+        )
     ).scalar_one_or_none()
 
 
-async def set_budget(session: AsyncSession, user_id: int, category: str, limit: Decimal | float) -> Budget:
+async def set_budget(
+    session: AsyncSession, user_id: int, category: str, limit: Decimal | float
+) -> Budget:
     category, limit = normalize_category(category), to_decimal(limit)
     if limit <= 0:
         raise ExpenseError("A budget limit must be greater than zero.")
@@ -79,16 +92,45 @@ async def remove_budget(session: AsyncSession, user_id: int, category: str) -> b
     return True
 
 
-async def list_budget_status(session: AsyncSession, user_id: int, period: Period | None = None) -> list[BudgetStatus]:
-    budgets = (await session.execute(select(Budget).where(Budget.user_id == user_id).order_by(Budget.category))).scalars().all()
-    return [BudgetStatus(b.category, b.monthly_limit, await category_spent(session, user_id, b.category, period)) for b in budgets]
+async def list_budget_status(
+    session: AsyncSession, user_id: int, period: Period | None = None
+) -> list[BudgetStatus]:
+    budgets = (
+        (
+            await session.execute(
+                select(Budget)
+                .where(Budget.user_id == user_id)
+                .order_by(Budget.category)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        BudgetStatus(
+            b.category,
+            b.monthly_limit,
+            await category_spent(session, user_id, b.category, period),
+        )
+        for b in budgets
+    ]
 
 
 async def budget_categories(session: AsyncSession, user_id: int) -> list[str]:
-    return list((await session.execute(select(Budget.category).where(Budget.user_id == user_id))).scalars().all())
+    return list(
+        (
+            await session.execute(
+                select(Budget.category).where(Budget.user_id == user_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
-async def evaluate_alerts(session: AsyncSession, user_id: int, category: str) -> str | None:
+async def evaluate_alerts(
+    session: AsyncSession, user_id: int, category: str
+) -> str | None:
     """
     Call after spending in `category`. Returns ONE alert message for the highest newly
     crossed threshold (or None). Each threshold fires once per month per budget.
@@ -98,35 +140,53 @@ async def evaluate_alerts(session: AsyncSession, user_id: int, category: str) ->
     if budget is None:
         return None
 
-    status = BudgetStatus(category, budget.monthly_limit, await category_spent(session, user_id, category))
+    status = BudgetStatus(
+        category, budget.monthly_limit, await category_spent(session, user_id, category)
+    )
     period = month_key()
     already = set(
-        (await session.execute(
-            select(BudgetAlert.threshold).where(BudgetAlert.budget_id == budget.id, BudgetAlert.period == period)
-        )).scalars().all()
+        (
+            await session.execute(
+                select(BudgetAlert.threshold).where(
+                    BudgetAlert.budget_id == budget.id, BudgetAlert.period == period
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
-    new = [t for t in settings.alert_thresholds if status.percent >= t and t not in already]
+    new = [
+        t for t in settings.alert_thresholds if status.percent >= t and t not in already
+    ]
     if not new:
         return None
     for t in new:
         await session.execute(
-            pg_insert(BudgetAlert).values(budget_id=budget.id, period=period, threshold=t).on_conflict_do_nothing()
+            pg_insert(BudgetAlert)
+            .values(budget_id=budget.id, period=period, threshold=t)
+            .on_conflict_do_nothing()
         )
 
     top = max(new)
     if status.spent > status.limit:
-        return (f"🚨 You've EXCEEDED your {category} budget! {money(status.spent)} spent of "
-                f"{money(status.limit)} ({status.percent}%), over by {money(-status.remaining)}.")
+        return (
+            f"🚨 You've EXCEEDED your {category} budget! {money(status.spent)} spent of "
+            f"{money(status.limit)} ({status.percent}%), over by {money(-status.remaining)}."
+        )
     if top >= 100:
         return f"🚨 Your {category} budget is fully used: {money(status.spent)} of {money(status.limit)}. Nothing left this month."
-    return (f"⚠️ {top}% of your {category} budget is used: {money(status.spent)} of {money(status.limit)}. "
-            f"{money(status.remaining)} left - spend wisely!")
+    return (
+        f"⚠️ {top}% of your {category} budget is used: {money(status.spent)} of {money(status.limit)}. "
+        f"{money(status.remaining)} left - spend wisely!"
+    )
 
 
-async def alerts_for(session: AsyncSession, user_id: int, expenses: list[Expense]) -> list[str]:
+async def alerts_for(
+    session: AsyncSession, user_id: int, expenses: list[Expense]
+) -> list[str]:
     """Budget alerts triggered by these freshly recorded expenses (one check per category)."""
     out = []
     for category in dict.fromkeys(e.category for e in expenses):
-        if (msg := await evaluate_alerts(session, user_id, category)):
+        if msg := await evaluate_alerts(session, user_id, category):
             out.append(msg)
     return out
