@@ -520,7 +520,7 @@ class ManagerService:
                 # The manager is only chatting. The policy changes ONLY through /setpolicy or /editpolicy (and then Save), never from a stray message.
                 if current is None:
                     return Reply(self.NO_POLICY_HINT)
-                chat_facts = await self._facts(s, company, current)
+                chat_facts, employee_names = await self._facts(s, company, current)
                 job = None
             elif (
                 mode == "draft_policy"
@@ -550,7 +550,13 @@ class ManagerService:
         ):  # just chatting: a short answer (the model is asked after the transaction is closed)
             return Reply(
                 await chat.reply(
-                    self.llm, tg, company.name, chat_facts, text, self.CHAT_HINT
+                    self.llm,
+                    tg,
+                    company.name,
+                    chat_facts,
+                    text,
+                    self.CHAT_HINT,
+                    employees=employee_names,
                 )
             )
         return await self._run_policy(
@@ -701,26 +707,29 @@ class ManagerService:
         await self._set(s, tg, mode, {"claim_id": claim.id})
         return Reply(prompt)
 
-    async def _facts(self, s: AsyncSession, company: Company, current) -> str:
+    async def _facts(
+        self, s: AsyncSession, company: Company, current
+    ) -> tuple[str, list[str]]:
         """What the chat answer may use: this company's policy and a few counts. Nothing else is sent to the model."""
         version, rules = current
         waiting = await claims.pending_for(s, company.id)
-        staff = len(
+        staff_names = list(
             (
                 await s.execute(
-                    select(Employee.id).where(Employee.company_id == company.id)
+                    select(Employee.name).where(Employee.company_id == company.id)
                 )
             )
             .scalars()
             .all()
         )
-        return (
-            f"POLICY v{version}:\n{parser.rules_text(rules)}\n\nEmployees: {staff}. Claims waiting for the manager: {len(waiting)}"
+        facts = (
+            f"POLICY v{version}:\n{parser.rules_text(rules)}\n\nEmployees: {len(staff_names)}. Claims waiting for the manager: {len(waiting)}"
             + "".join(
                 f"\n- claim #{c.id} from {e.name}: {c.title}, {money(texts.claimed_total(c))} claimed"
                 for c, e in waiting[:5]
             )
         )
+        return facts, staff_names
 
     # ------------------------------------------------------------------ own amounts, expense by expense
     async def _start_items(self, s: AsyncSession, tg: int, claim) -> Reply:

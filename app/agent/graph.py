@@ -36,6 +36,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
 
+from app.agent.pii_masker import build_chat_masker
 from app.agent.prompts import GROUP_CHAT_CONTEXT, PRIVATE_CHAT_CONTEXT, SYSTEM_PROMPT
 from app.agent.toolsets import GROUP_TOOLS, PRIVATE_TOOLS
 from app.mcp_client.gateway import McpGateway
@@ -118,18 +119,28 @@ def build_graph(
         ident, in_group = identity_from(config), cfg.get("chat_type") == "group"
         info = (await gateway.call(ident, "agent_context")).data
         categories, friend_names, chat_context = [], [], PRIVATE_CHAT_CONTEXT
+        masker = build_chat_masker(
+            speaker=info.get("speaker") or ident.name,
+            username=ident.username,
+            telegram_id=ident.telegram_id,
+            group=(info.get("group") or ident.group_title) if in_group else None,
+            group_chat_id=ident.group_chat_id if in_group else None,
+            friends=info.get("friends", []) if not in_group else None,
+            members=info.get("members") or [] if in_group else None,
+        )
         if in_group:
-            people = ", ".join(info.get("members") or []) or "none yet"
+            masked_members = [
+                masker.mask_text(m) for m in (info.get("members") or [])
+            ]
+            people = ", ".join(masked_members) or "none yet"
             chat_context = GROUP_CHAT_CONTEXT.format(
-                speaker=info.get("speaker", "someone"),
-                group=info.get("group") or "(not created yet)",
+                speaker=masker.mask_text(info.get("speaker", "someone")),
+                group=masker.mask_text(info.get("group") or "") or "(not created yet)",
                 members=people,
             )
         else:
-            categories, friend_names = (
-                info.get("categories", []),
-                info.get("friends", []),
-            )
+            categories = info.get("categories", [])
+            friend_names = [masker.mask_text(f) for f in info.get("friends", [])]
         now = now_local()
         system = SystemMessage(
             SYSTEM_PROMPT.format(
@@ -150,9 +161,11 @@ def build_graph(
             include_system=False,
             allow_partial=False,
         )
+        masked_recent = masker.mask_messages(recent)
         resp = await (llm_group if in_group else llm_private).ainvoke(
-            [system, *recent], config
+            [system, *masked_recent], config
         )
+        resp = masker.unmask_ai_message(resp)
         if not resp.tool_calls:
             # Guardrail: the model must act through tools. Free text from it is never forwarded
             # (that is where coding / general-knowledge answers would leak out).

@@ -4,6 +4,7 @@ import json
 from decimal import Decimal
 
 from finance_agent.llm import LLM, LLMError
+from finance_agent.pii_masker import FinancePIIMasker
 from finance_agent.policy.engine import apply_pools, evaluate, exact_rule, match_rule
 from finance_agent.policy.models import Item, Rule, Verdict
 
@@ -25,10 +26,17 @@ async def rule_for(llm: LLM | None, rules: list[Rule], item: Item) -> Rule | Non
     weak = match_rule(rules, item)  # a keyword in the category only
     if llm is None:
         return weak
+    masker = FinancePIIMasker()
+    masked_rules = masker.mask_text(
+        json.dumps([r.model_dump(mode="json") for r in rules], ensure_ascii=False)
+    )
+    masked_expense = masker.mask_text(f"{item.category}: {item.description}")
     try:
-        out = await llm.json(
-            SYSTEM_CLASSIFY,
-            f"RULES:\n{json.dumps([r.model_dump(mode='json') for r in rules], ensure_ascii=False)}\n\nEXPENSE:\n{item.category}: {item.description}",
+        out = masker.unmask_value(
+            await llm.json(
+                SYSTEM_CLASSIFY,
+                f"RULES:\n{masked_rules}\n\nEXPENSE:\n{masked_expense}",
+            )
         )
     except LLMError:
         return weak  # the model is unavailable: the category hint is better than nothing, and the manager sees every claim anyway
