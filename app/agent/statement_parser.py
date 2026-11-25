@@ -15,6 +15,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from app.agent.pii_masker import PIIMasker
+
 
 log = logging.getLogger(__name__)
 
@@ -110,5 +112,15 @@ async def parse_pages(
             )
 
     chunks = split_chunks(pages)
-    results = await asyncio.gather(*(one(i, c) for i, c in enumerate(chunks)))
-    return [row for chunk_rows in results for row in chunk_rows]
+    masker = PIIMasker()
+    masked_chunks = [masker.mask_text(c) for c in chunks]
+    results = await asyncio.gather(
+        *(one(i, c) for i, c in enumerate(masked_chunks))
+    )
+    rows: list[dict] = []
+    for chunk_rows in results:
+        for row in chunk_rows:
+            if row.get("description"):
+                row["description"] = masker.unmask_text(row["description"])
+            rows.append(row)
+    return rows

@@ -13,6 +13,7 @@ from typing import Literal
 
 from finance_agent.llm import LLM, LLMError
 from finance_agent.formatting import money
+from finance_agent.pii_masker import FinancePIIMasker
 from finance_agent.policy.engine import POOLED, ask_for, effective_cap, evaluate
 from finance_agent.policy.models import Item, Rule
 
@@ -55,15 +56,28 @@ def _int(value) -> int | None:
 
 
 async def answer(
-    llm: LLM, rules: list[Rule], version: int, transcript: list[str]
+    llm: LLM,
+    rules: list[Rule],
+    version: int,
+    transcript: list[str],
+    *,
+    company: str | None = None,
+    employee: str | None = None,
 ) -> QaResult:
     """transcript: the conversation so far, oldest first, each line prefixed 'Employee: ' or 'Agent: '."""
+    masker = FinancePIIMasker(
+        company=company, employees=(employee,) if employee else ()
+    )
+    rules_json = masker.mask_text(
+        json.dumps([r.model_dump(mode="json") for r in rules], ensure_ascii=False)
+    )
+    masked_transcript = [masker.mask_text(line) for line in transcript]
     prompt = (
-        f"POLICY RULES (version {version}):\n{json.dumps([r.model_dump(mode='json') for r in rules], ensure_ascii=False)}\n\nCONVERSATION:\n"
-        + "\n".join(transcript)
+        f"POLICY RULES (version {version}):\n{rules_json}\n\nCONVERSATION:\n"
+        + "\n".join(masked_transcript)
     )
     try:
-        out = await llm.json(SYSTEM, prompt)
+        out = masker.unmask_value(await llm.json(SYSTEM, prompt))
     except LLMError:
         return QaResult(
             "need_info",

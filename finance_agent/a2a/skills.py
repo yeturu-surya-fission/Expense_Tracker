@@ -139,7 +139,14 @@ async def ask_policy(
         if session is not None and session.employee_id != emp.id:
             session = None
         transcript = [*(session.transcript if session else []), f"Employee: {question}"]
-        result = await qa.answer(llm, rules, version, transcript)
+        result = await qa.answer(
+            llm,
+            rules,
+            version,
+            transcript,
+            company=company.name,
+            employee=emp.name,
+        )
         if result.status == "need_info":
             if session is None and task_id:
                 session = QaSession(task_id=task_id, employee_id=emp.id, transcript=[])

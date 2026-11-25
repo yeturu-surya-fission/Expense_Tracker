@@ -10,6 +10,7 @@ import time
 from collections import defaultdict, deque
 
 from finance_agent.llm import LLM, LLMError
+from finance_agent.pii_masker import FinancePIIMasker
 
 MAX_CHARS = 400
 MAX_PER_WINDOW, WINDOW_SECONDS = 12, 600
@@ -45,19 +46,32 @@ def rate_limited(tg: int) -> bool:
 
 
 async def reply(
-    llm: LLM, tg: int, company: str, facts: str, text: str, fallback: str
+    llm: LLM,
+    tg: int,
+    company: str,
+    facts: str,
+    text: str,
+    fallback: str,
+    *,
+    employees: list[str] | tuple[str, ...] = (),
 ) -> str:
     text = text.strip()
     if len(text) > MAX_CHARS:
         return TOO_LONG
     if rate_limited(tg):
         return SLOW_DOWN
+    masker = FinancePIIMasker(company=company, employees=employees)
+    masked_company = masker.mask_text(company)
+    masked_facts = masker.mask_text(facts)
+    masked_text = masker.mask_text(text)
     try:
         out = await llm.json(
-            SYSTEM, f"COMPANY: {company}\n{facts}\n\nMANAGER'S MESSAGE:\n{text}"
+            SYSTEM,
+            f"COMPANY: {masked_company}\n{masked_facts}\n\nMANAGER'S MESSAGE:\n{masked_text}",
         )
     except LLMError:
         return fallback
+    out = masker.unmask_value(out)
     if out.get("wants_change") is True:
         return CHANGE_HINT
     answer = str(out.get("reply") or "").strip()

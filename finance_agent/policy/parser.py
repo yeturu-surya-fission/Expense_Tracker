@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from finance_agent.config import settings
 from finance_agent.llm import LLM, LLMError
+from finance_agent.pii_masker import FinancePIIMasker
 from finance_agent.policy.engine import describe
 from finance_agent.policy.models import Rule
 
@@ -134,10 +135,13 @@ def _dump(rules: list[Rule]) -> str:
 
 async def parse_policy(llm: LLM, text: str) -> list[Rule]:
     """The rules in a pasted policy."""
+    masker = FinancePIIMasker()
+    masked_text = masker.mask_text(text[:30000])
     try:
-        return _validate(
-            await llm.json(SYSTEM_PARSE, text[:30000], timeout=settings.policy_timeout)
+        raw = await llm.json(
+            SYSTEM_PARSE, masked_text, timeout=settings.policy_timeout
         )
+        return _validate(masker.unmask_value(raw))
     except LLMError as e:
         raise PolicyParseError(
             f"I couldn't read that just now ({e}). Your text is saved: tap Try again.",
@@ -147,14 +151,16 @@ async def parse_policy(llm: LLM, text: str) -> list[Rule]:
 
 async def edit_policy(llm: LLM, current: list[Rule], instruction: str) -> list[Rule]:
     """The current rules with one change from the manager ('raise the hotel cap to 8000')."""
+    masker = FinancePIIMasker()
+    masked_rules = masker.mask_text(_dump(current))
+    masked_instruction = masker.mask_text(instruction[:2000])
     try:
-        return _validate(
-            await llm.json(
-                SYSTEM_EDIT,
-                f"CURRENT RULES:\n{_dump(current)}\n\nINSTRUCTION:\n{instruction[:2000]}",
-                timeout=settings.policy_timeout,
-            )
+        raw = await llm.json(
+            SYSTEM_EDIT,
+            f"CURRENT RULES:\n{masked_rules}\n\nINSTRUCTION:\n{masked_instruction}",
+            timeout=settings.policy_timeout,
         )
+        return _validate(masker.unmask_value(raw))
     except LLMError as e:
         raise PolicyParseError(
             f"I couldn't apply that just now ({e}). Your instruction is saved: tap Try again.",
